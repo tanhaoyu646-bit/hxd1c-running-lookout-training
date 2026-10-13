@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+  <meta name="theme-color" content="#071722">
+  <meta name="mobile-web-app-capable" content="yes">
+  <base href="../">
+  <title>K2026次旅客列车平稳起动专项</title>
+  <link rel="stylesheet" href="./styles/smooth-start.css?rev=notch-timing-v30">
+  <link rel="stylesheet" href="./styles/credential-training.css?rev=mobile-controls-v28">
+</head>
+<body data-training-app="smooth">
+  <div id="landscape-gate" class="landscape-gate" hidden aria-modal="true" role="dialog">
+    <div class="landscape-card"><h2>横屏进入平稳起动专项</h2><p>请将手机横向旋转，以便同时观察驾驶台、线路和操纵提示。</p><button id="enter-training" type="button">进入训练</button></div>
+  </div>
+  <div id="rotate-tip" class="rotate-tip">请将手机横向旋转后继续训练</div>
+
+  <header class="topbar">
+    <div><h1>K2026次旅客列车平稳起动专项</h1><p>平道与上坡道差异化操纵训练</p></div>
+    <div class="prototype-tag">K2026次教学编组</div>
+  </header>
+
+  <main class="app-shell">
+    <section class="workspace stage-wrap">
+      <div class="stage" id="stage" aria-label="HXD1C驾驶台与平稳起动线路">
+        <canvas id="route-scene" class="route-scene" aria-label="随列车里程移动的三维线路"></canvas>
+        <img id="cab" class="cab-layer" src="./assets/archive-cabview/HXD1C_front.png" alt="HXD1C驾驶台功能载体">
+        <div id="overlay" class="overlay"></div>
+        <div class="stage-toolbar">
+          <button id="workflow-toggle" type="button" aria-controls="workflow-drawer">专项流程 <b data-workflow-progress>0/8</b></button>
+          <button id="training-toggle" type="button" aria-controls="training-drawer">教学考评与坡道</button>
+          <button id="view-toggle" class="view-toggle" type="button" aria-controls="mobile-view-tabs" aria-expanded="false">视角</button>
+          <button id="metrics-toggle" class="metrics-toggle" type="button" aria-controls="smooth-training-panel" aria-expanded="false">运行数据</button>
+        </div>
+        <div class="coach-progress" aria-label="全列起动进度"><span id="coach-progress"></span><b>全列起动</b></div>
+        <button id="exit-immersive" class="mobile-fullscreen-exit" type="button" aria-label="退出全屏">×</button>
+      </div>
+
+      <nav id="mobile-view-tabs" class="view-tabs tabs" aria-label="驾驶室观察视角">
+        <button type="button" data-view="front" class="active">正面驾驶台</button>
+        <button type="button" data-view="left">左侧窗</button>
+        <button type="button" data-view="right">右侧窗</button>
+        <button type="button" data-view="rearLeft">左后部瞭望</button>
+        <button type="button" data-view="rearRight">右后部瞭望</button>
+      </nav>
+
+      <div id="hint" class="hint" aria-live="polite">先选择教学或考评模式，再选择平道或上坡道起动。</div>
+
+      <section id="smooth-training-panel" class="smooth-training" aria-label="平稳起动核心训练">
+        <div class="smooth-training-head"><div><strong>平稳起动核心训练</strong><span>全列起动后再加速</span></div><small>上坡道须建立牵引后再缓解单阀，防止后溜</small></div>
+        <div class="dynamic-strip" aria-label="平稳起动动态状态">
+          <div><span>速度</span><b id="metric-speed">0.0 km/h</b></div>
+          <div><span>牵引级位</span><b id="metric-traction">零位</b></div>
+          <div><span>已起动车辆</span><b id="metric-start">0/12辆</b></div>
+          <div><span>加速度</span><b id="metric-acceleration">平稳</b></div>
+          <div><span>纵向冲动</span><b id="metric-jerk">正常</b></div>
+          <div><span id="metric-context-label">线路坡度</span><b id="metric-lkj">0‰</b></div>
+        </div>
+        <ol id="smooth-guide" class="smooth-guide"></ol>
+      </section>
+    </section>
+
+    <aside class="side-column control-sidebar">
+      <section class="panel drawer control-drawer" id="workflow-drawer">
+        <div class="panel-head"><h2>平稳起动专项流程</h2><button id="workflow-close" class="drawer-close" type="button" aria-label="关闭流程">×</button></div>
+        <ol id="procedure"></ol>
+      </section>
+      <section class="panel drawer control-drawer" id="training-drawer">
+        <div class="panel-head"><h2>教学／考评与坡道</h2><button id="training-close" class="drawer-close" type="button" aria-label="关闭教学考评与坡道">×</button></div>
+        <div id="training-controls" class="training-controls"></div>
+      </section>
+      <section class="panel debug-panel">
+        <div class="panel-head"><h2>调试控制</h2></div>
+        <div id="keys" class="keys"></div><div id="status" class="status"></div>
+      </section>
+    </aside>
+  </main>
+
+  <button id="workflow-scrim" class="drawer-backdrop workflow-scrim" type="button" aria-label="关闭侧栏"></button>
+  <script type="module" src="./scripts/archive-2d-cabview-real-route.js?rev=notch-timing-v30"></script>
+</body>
+</html>

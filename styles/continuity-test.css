@@ -1,0 +1,14 @@
+body[data-training-app="continuity"]{user-select:none;-webkit-user-select:none}
+body[data-training-app="continuity"] img,body[data-training-app="continuity"] .stage,body[data-training-app="continuity"] .overlay{user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
+.header-actions{display:flex;align-items:center;gap:9px}.back-link{padding:7px 11px;border:1px solid #4d9dc2;border-radius:7px;background:#09283b;color:#dff7ff;text-decoration:none;font-size:12px}
+body[data-training-app="continuity"] .debug-panel .keys{display:none}
+body[data-training-app="continuity"] .training-controls{padding:11px}
+.continuity-summary{padding:10px;border:1px solid #2d6f8e;border-radius:8px;background:#071c2b;color:#bde7f7;font-size:12px;line-height:1.65}.continuity-summary b{color:#75efb1}.continuity-reset{width:100%;margin-top:10px;padding:9px;border:1px solid #46a6cf;border-radius:7px;background:#0b4162;color:#fff}
+body[data-training-app="continuity"] .sprite,body[data-training-app="continuity"] .touch-target,body[data-training-app="continuity"] .control-position-badge{touch-action:none}
+body[data-training-app="continuity"] .independent-brake{transition:translate .08s ease-out;will-change:translate}
+body[data-training-app="continuity"] .independent-brake.side-release-active{translate:26% 0;filter:drop-shadow(0 0 4px #ffd36a)}
+body[data-training-app="continuity"] .control-position-badge.side-release-active{border-color:#ffd36a;background:#57380be8;color:#fff4c9}
+body[data-training-app="continuity"] .lkj-screen{contain:layout paint}
+body[data-training-app="continuity"] .lkj-native-chart{will-change:auto}
+@media(max-width:760px){.header-actions{gap:5px}.back-link{padding:5px 7px;font-size:10px}.prototype-tag{display:none}}
+@media(orientation:landscape) and (max-height:620px){.header-actions{position:absolute;right:max(8px,env(safe-area-inset-right));top:5px}.back-link{background:#061827e8}}

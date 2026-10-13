@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+  <meta name="theme-color" content="#10263f">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>旅客列车操纵提示卡与贯通试验</title>
+  <link rel="stylesheet" href="./styles/curve-puzzle.css?rev=continuity-v1">
+</head>
+<body>
+  <div id="landscape-gate" class="landscape-gate" hidden aria-modal="true" role="dialog">
+    <div class="landscape-card">
+      <h2>横屏进入操纵提示卡</h2>
+      <p>手机横屏可同时查看完整运行图和候选曲线。</p>
+      <button id="enter-landscape" type="button">横屏进入</button>
+    </div>
+  </div>
+  <div class="rotate-tip">请横置手机查看完整运行图</div>
+
+  <header class="topbar">
+    <div>
+      <h1>铁路运行曲线拼接训练</h1>
+      <p>爱国站—敬业站 · 四显示自动闭塞信号判读与操纵曲线匹配</p>
+    </div>
+    <div class="top-actions">
+      <a class="button primary" href="./continuity-test/">进入贯通试验</a>
+      <button id="resetBtn" type="button">开始新一局</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="banner">
+      <div class="chip">当前区段：<strong id="stageName">准备中</strong></div>
+      <div class="chip">当前信号：<strong id="signalText">—</strong></div>
+      <div class="chip" id="branchChip">到达K226+091后揭示进站工况</div>
+      <div class="chip">完成进度：<strong id="progressText">0 / 11</strong></div>
+    </div>
+
+    <section class="paper">
+      <div class="chartbar">
+        <div><b>操纵示意图拼接区</b> · 红线为教学限速线，黑线为已正确拼接的运行线</div>
+        <div class="legend">
+          <span><i class="green"></i>绿</span><span><i class="green-yellow"></i>绿黄</span>
+          <span><i class="yellow"></i>黄</span><span><i class="red"></i>红</span>
+        </div>
+      </div>
+      <div class="chartscroll">
+        <div class="board" id="board">
+          <img alt="爱国站至敬业站操纵示意图底图" src="./assets/curve-puzzle/route-board.png">
+          <img class="speed-limit" alt="操纵示意图红色限速线" src="./assets/curve-puzzle/speed_limit_red.png">
+          <svg id="svg" viewBox="0 0 1677 938" preserveAspectRatio="xMidYMid meet" role="img" aria-label="依据信号条件逐段拼接的操纵示意图"></svg>
+        </div>
+      </div>
+      <div class="instruction">
+        <span>当前任务：<b id="taskText">选择正确的运行曲线</b></span>
+        <small>点击曲线卡片，再点击蓝色区段或“确认拼接”。</small>
+      </div>
+    </section>
+
+    <div class="gamepanel">
+      <section class="panel">
+        <h2>选择当前两架信号机之间的运行线</h2>
+        <p class="subtitle" id="question">观察当前信号，从三张曲线卡片中选择符合工况的曲线。</p>
+        <div class="choices" id="choices"></div>
+        <div class="actionRow">
+          <button class="primary" type="button" id="submitBtn" disabled>确认拼接</button>
+          <button class="secondary" type="button" id="clearBtn">取消选择</button>
+          <span id="chooseHelp" style="font-size:11px;color:#6e839b">尚未选择曲线</span>
+        </div>
+      </section>
+      <aside class="panel side">
+        <h2>本局成绩</h2>
+        <div class="score"><span id="score">100</span><small> 分</small></div>
+        <div class="meter"><div id="meterFill"></div></div>
+        <div class="stat"><span>正确拼接</span><b id="correctNum">0段</b></div>
+        <div class="stat"><span>错误尝试</span><b id="wrongNum">0次</b></div>
+        <div class="stat"><span>运行时间</span><b id="elapsed">00:00</b></div>
+        <div class="stat"><span>完成状态</span><b id="gameStatus">训练中</b></div>
+        <div id="feedback" class="message" role="status" aria-live="polite" style="margin-top:13px">先观察K222+603出站信号机，再选择始发曲线。</div>
+        <div class="tip"><b>信号逻辑：</b>站标不显示灯色。列车进入下一闭塞分区后，后方信号按红、黄、绿黄、绿依次变化；K226+091进站信号按本局进路显示绿灯或双黄灯。</div>
+      </aside>
+    </div>
+
+    <div class="result" id="result">
+      <h2>本局操纵示意图拼接完成</h2>
+      <p id="resultText"></p>
+      <button class="button primary" id="playAgain" type="button">重新出题</button>
+    </div>
+    <div class="notice">本页面为虚拟教学训练。爱国站—敬业站为教学站名；红色限速线和运行曲线用于本项目课堂考评，不作为实际铁路行车依据。</div>
+  </main>
+  <script type="module" src="./scripts/curve-puzzle.js?rev=continuity-v1"></script>
+</body>
+</html>
