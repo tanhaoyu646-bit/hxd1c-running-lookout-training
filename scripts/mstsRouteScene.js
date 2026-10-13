@@ -1,6 +1,7 @@
 import * as THREE from '../lib/three/three.module.js';
 import { ROUTE_CONTEXT } from './smoothStartConfig.js';
 import { buildRailAlignedPath, cumulativePathDistances } from './railAlignedPath.js';
+import { LOOKOUT_TRAINING_CONFIG } from './lookoutTrainingConfig.js';
 
 // fetch() 的相对地址以页面而非当前模块为基准；GitHub Pages 位于仓库子目录，
 // 因此所有三维资源必须相对 import.meta.url 解析，不能使用普通 ../assets 字符串。
@@ -59,6 +60,8 @@ export class MstsRouteScene {
     this.neighborSignal = null;
     this.throughSignal = null;
     this.passengerCars = [];
+    this.lookoutRoot = null;
+    this.lookoutVisuals = {};
     this.signalRaycaster = new THREE.Raycaster();
     this.signalPointer = new THREE.Vector2();
     this.materialCache = new Map();
@@ -107,6 +110,7 @@ export class MstsRouteScene {
       if (ROUTE_RENDER_OPTIONS.railHighlights) this.buildRailHighlights(NEXT_STATION_DISTANCE + 350);
       if (ROUTE_RENDER_OPTIONS.sourceDepartureSignal) this.buildSourceDepartureSignal(sceneData);
       this.buildTeachingThroughSignal();
+      this.buildLookoutTrainingScenery();
       this.ready = true;
       this.applyCamera();
       this.canvas.dispatchEvent(new CustomEvent('route-ready', {
@@ -718,6 +722,165 @@ export class MstsRouteScene {
         glow.position.copy(glow.userData.basePosition).multiplyScalar(teachingScale);
         glow.scale.setScalar(glowSize);
       });
+    }
+  }
+
+  getLookoutPathFrame(distance) {
+    const point = this.getPathPosition(distance);
+    const before = this.getPathPosition(Math.max(0, distance - 3));
+    const after = this.getPathPosition(Math.min(this.pathLength, distance + 3));
+    const tangent = after.sub(before).setY(0);
+    if (tangent.lengthSq() < 0.000001) tangent.copy(this.forward);
+    tangent.normalize();
+    return { point, tangent, right: new THREE.Vector3(tangent.z, 0, -tangent.x).normalize() };
+  }
+
+  placeLookoutObject(object, distance, lateral = 0, vertical = 0) {
+    const { point, tangent, right } = this.getLookoutPathFrame(distance);
+    object.position.copy(point).addScaledVector(right, lateral);
+    object.position.y += vertical;
+    object.rotation.set(0, Math.atan2(tangent.x, tangent.z), 0);
+    object.userData.basePosition = object.position.clone();
+    object.userData.right = right;
+    return object;
+  }
+
+  buildCrossing(config, intrusion = false) {
+    const root = new THREE.Group();
+    root.name = intrusion ? 'LOOKOUT_INTRUSION_CROSSING' : 'LOOKOUT_NORMAL_CROSSING';
+    this.placeLookoutObject(root, config.hazardDistance);
+    const roadMaterial = new THREE.MeshStandardMaterial({ color: '#484b4d', roughness: .92 });
+    const paintMaterial = new THREE.MeshBasicMaterial({ color: '#eee6ba' });
+    const postMaterial = new THREE.MeshStandardMaterial({ color: '#e6e8e7', roughness: .72 });
+    const stripeMaterial = new THREE.MeshStandardMaterial({ color: '#d83c37', roughness: .7 });
+    const road = new THREE.Mesh(new THREE.BoxGeometry(17, .12, 7), roadMaterial);
+    road.position.y = .02;root.add(road);
+    for (const x of [-6,-3,0,3,6]) {
+      const marking = new THREE.Mesh(new THREE.BoxGeometry(1.5,.03,.16),paintMaterial);
+      marking.position.set(x,.1,0);root.add(marking);
+    }
+    for (const side of [-1,1]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(.09,.11,2.2,10),postMaterial);
+      post.position.set(side*5.2,1.1,-2.3);root.add(post);
+      const crossA = new THREE.Mesh(new THREE.BoxGeometry(.16,2.2,.12),stripeMaterial);
+      crossA.position.set(side*5.2,2.5,-2.3);crossA.rotation.z=.75;root.add(crossA);
+      const crossB = crossA.clone();crossB.rotation.z=-.75;root.add(crossB);
+    }
+    if (intrusion) {
+      const hazard = new THREE.Group();hazard.name='LOOKOUT_INTRUSION_ACTORS';
+      const vehicle = new THREE.Mesh(new THREE.BoxGeometry(3.8,1.55,1.75),new THREE.MeshStandardMaterial({color:'#d48b32',roughness:.52,metalness:.18}));
+      vehicle.position.set(-.8,1.0,.2);hazard.add(vehicle);
+      for(const x of [-2.15,.55])for(const z of [-.62,.62]){const wheel=new THREE.Mesh(new THREE.CylinderGeometry(.34,.34,.18,14),new THREE.MeshStandardMaterial({color:'#171a1c',roughness:.9}));wheel.rotation.z=Math.PI/2;wheel.position.set(x,.38,z);hazard.add(wheel);}
+      const person = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(.26,.85,5,10),new THREE.MeshStandardMaterial({color:'#d9363e',roughness:.75}));body.position.y=1.05;person.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(.22,12,10),new THREE.MeshStandardMaterial({color:'#d5a27f',roughness:.8}));head.position.y=1.78;person.add(head);person.position.set(1.8,0,-.5);hazard.add(person);
+      root.add(hazard);this.lookoutVisuals.intrusionActors=hazard;
+    }
+    this.lookoutRoot.add(root);
+  }
+
+  buildTunnel(config) {
+    const root = new THREE.Group();root.name='LOOKOUT_TUNNEL';this.lookoutRoot.add(root);
+    const wallMaterial = new THREE.MeshStandardMaterial({color:'#464b4b',roughness:.97,side:THREE.DoubleSide});
+    const portalMaterial = new THREE.MeshStandardMaterial({color:'#5a5e5b',roughness:.9});
+    for(let distance=config.tunnelStartDistance;distance<=config.tunnelEndDistance;distance+=32){
+      const segment=new THREE.Group();
+      const left=new THREE.Mesh(new THREE.BoxGeometry(.65,6.3,33),wallMaterial);left.position.set(-4.25,3.1,0);
+      const right=left.clone();right.position.x=4.25;
+      const roof=new THREE.Mesh(new THREE.BoxGeometry(9.1,.55,33),wallMaterial);roof.position.y=6.25;
+      segment.add(left,right,roof);this.placeLookoutObject(segment,distance);root.add(segment);
+    }
+    for(const distance of [config.tunnelStartDistance,config.tunnelEndDistance]){
+      const portal=new THREE.Group();
+      const top=new THREE.Mesh(new THREE.BoxGeometry(10,.65,.9),portalMaterial);top.position.y=6.45;portal.add(top);
+      for(const x of [-4.65,4.65]){const side=new THREE.Mesh(new THREE.BoxGeometry(.7,6.8,.9),portalMaterial);side.position.set(x,3.1,0);portal.add(side);}
+      this.placeLookoutObject(portal,distance);root.add(portal);
+    }
+    const anomaly=new THREE.Group();anomaly.name='LOOKOUT_TUNNEL_CLEARANCE_ANOMALY';
+    const warningMaterial=new THREE.MeshBasicMaterial({color:'#ff542f',toneMapped:false});
+    const upright=new THREE.Mesh(new THREE.BoxGeometry(.42,4.9,.42),warningMaterial);upright.position.set(1.65,2.45,0);
+    const arm=new THREE.Mesh(new THREE.BoxGeometry(3.5,.42,.42),warningMaterial);arm.position.set(.05,4.7,0);arm.rotation.z=-.12;
+    anomaly.add(upright,arm);this.placeLookoutObject(anomaly,config.hazardDistance);root.add(anomaly);
+    this.lookoutVisuals.tunnelAnomaly=anomaly;
+  }
+
+  buildLookoutContinuationTrack(startDistance, endDistance) {
+    const root=new THREE.Group();root.name='LOOKOUT_CONTINUATION_TRACK';
+    const ribbon=(halfWidth,lateral,y,material,name)=>{
+      const positions=[];const indices=[];let row=0;
+      for(let distance=startDistance;distance<=endDistance+.01;distance+=6){
+        const {point,right}=this.getLookoutPathFrame(Math.min(distance,endDistance));
+        const center=point.clone().addScaledVector(right,lateral);center.y+=y;
+        const a=center.clone().addScaledVector(right,-halfWidth);const b=center.clone().addScaledVector(right,halfWidth);
+        positions.push(a.x,a.y,a.z,b.x,b.y,b.z);
+        if(row>0){const base=(row-1)*2;indices.push(base,base+2,base+1,base+1,base+2,base+3);}row+=1;
+      }
+      const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setIndex(indices);geometry.computeVertexNormals();geometry.computeBoundingSphere();
+      const mesh=new THREE.Mesh(geometry,material);mesh.name=name;mesh.frustumCulled=false;root.add(mesh);
+    };
+    const ballastMaterial=new THREE.MeshStandardMaterial({color:'#686864',roughness:1,side:THREE.DoubleSide});
+    const railMaterial=new THREE.MeshPhysicalMaterial({color:'#596269',metalness:.78,roughness:.24,clearcoat:.35,side:THREE.DoubleSide});
+    ribbon(2.35,0,-.045,ballastMaterial,'LOOKOUT_BALLAST');
+    ribbon(.055,-.7175,.035,railMaterial,'LOOKOUT_RAIL_LEFT');
+    ribbon(.055,.7175,.035,railMaterial,'LOOKOUT_RAIL_RIGHT');
+    const sleeperGeometry=new THREE.BoxGeometry(3.15,.12,.24);
+    const sleeperMaterial=new THREE.MeshStandardMaterial({color:'#514d47',roughness:.96});
+    const count=Math.floor((endDistance-startDistance)/12)+1;
+    const sleepers=new THREE.InstancedMesh(sleeperGeometry,sleeperMaterial,count);sleepers.name='LOOKOUT_SLEEPERS';sleepers.frustumCulled=false;
+    const object=new THREE.Object3D();
+    for(let index=0;index<count;index+=1){const distance=startDistance+index*12;const {point,tangent}=this.getLookoutPathFrame(distance);object.position.copy(point);object.position.y-=.015;object.rotation.set(0,Math.atan2(tangent.x,tangent.z),0);object.updateMatrix();sleepers.setMatrixAt(index,object.matrix);}
+    sleepers.instanceMatrix.needsUpdate=true;root.add(sleepers);this.lookoutRoot.add(root);
+  }
+
+  buildRailGlint(config) {
+    const root = new THREE.Group();root.name='LOOKOUT_RAIL_GLINT';
+    const material=new THREE.MeshBasicMaterial({color:'#f5fbff',transparent:true,opacity:.88,depthWrite:false,toneMapped:false});
+    const buildSection=(start,end,name)=>{
+      const positions=[];const indices=[];const step=6;let pair=0;
+      for(const railOffset of [-.69,.69]){
+        const sectionStart=pair;let localIndex=0;
+        for(let distance=start;distance<=end+.01;distance+=step){
+          const {point,right}=this.getLookoutPathFrame(Math.min(distance,end));
+          const center=point.clone().addScaledVector(right,railOffset);center.y+=.055;
+          const a=center.clone().addScaledVector(right,-.018);const b=center.clone().addScaledVector(right,.018);
+          positions.push(a.x,a.y,a.z,b.x,b.y,b.z);
+          if(localIndex>0){const base=sectionStart+(localIndex-1)*2;indices.push(base,base+2,base+1,base+1,base+2,base+3);}
+          localIndex+=1;
+        }
+        pair+=localIndex*2;
+      }
+      const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setIndex(indices);geometry.computeBoundingSphere();
+      const mesh=new THREE.Mesh(geometry,material);mesh.name=name;mesh.renderOrder=4;mesh.frustumCulled=false;root.add(mesh);
+    };
+    // 危险点前后各留出明显断口，仅表现光带中断，不改变钢轨碰撞或车辆运行。
+    buildSection(config.glintStartDistance,config.hazardDistance-38,'LOOKOUT_GLINT_BEFORE_BREAK');
+    buildSection(config.hazardDistance+38,config.glintEndDistance,'LOOKOUT_GLINT_AFTER_BREAK');
+    this.lookoutRoot.add(root);this.lookoutVisuals.railGlint=root;
+  }
+
+  buildLookoutTrainingScenery() {
+    this.lookoutRoot=new THREE.Group();this.lookoutRoot.name='LOOKOUT_TRAINING_SCENERY';this.routeRoot.add(this.lookoutRoot);
+    const [normal,tunnel,rail,intrusion]=LOOKOUT_TRAINING_CONFIG.events;
+    this.buildLookoutContinuationTrack(9800,LOOKOUT_TRAINING_CONFIG.finishDistance+300);
+    this.buildCrossing(normal,false);this.buildTunnel(tunnel);this.buildRailGlint(rail);this.buildCrossing(intrusion,true);
+  }
+
+  updateLookoutTraining(attempt, distance) {
+    if(!this.lookoutRoot)return;
+    const tunnel=LOOKOUT_TRAINING_CONFIG.events.find((item)=>item.visualKind==='tunnel');
+    const insideTunnel=distance>=tunnel.tunnelStartDistance&&distance<=tunnel.tunnelEndDistance;
+    this.renderer.toneMappingExposure=insideTunnel ? .58 : 1.05;
+    if(insideTunnel){this.scene.background.set('#171c1f');this.scene.fog.color.set('#171c1f');this.scene.fog.near=55;this.scene.fog.far=520;}
+    else this.scene.fog.color.set('#a7b9c2');
+    const tunnelEvent=attempt?.events?.['tunnel-hazard'];
+    if(this.lookoutVisuals.tunnelAnomaly)this.lookoutVisuals.tunnelAnomaly.visible=!tunnelEvent?.cleared;
+    const intrusionEvent=attempt?.events?.['intrusion-crossing'];
+    const actors=this.lookoutVisuals.intrusionActors;
+    if(actors){
+      const config=LOOKOUT_TRAINING_CONFIG.events.find((item)=>item.id==='intrusion-crossing');
+      const escape=intrusionEvent?.stoppedBeforeHazard?0:THREE.MathUtils.smoothstep(distance,config.hazardDistance-28,config.passDistance);
+      actors.position.set(escape*9,0,0);
+      actors.visible=!intrusionEvent?.cleared||distance<config.passDistance;
     }
   }
 

@@ -6,10 +6,14 @@ import { getProcedure, scoreRun } from '../scripts/procedure.js';
 
 const curveHtml = await readFile(new URL('../index.html', import.meta.url), 'utf8');
 const continuityHtml = await readFile(new URL('../continuity-test/index.html', import.meta.url), 'utf8');
+const lookoutHtml = await readFile(new URL('../lookout-training/index.html', import.meta.url), 'utf8');
 const smoothHtml = await readFile(new URL('../smooth-start/index.html', import.meta.url), 'utf8');
-assert.match(curveHtml, /铁路运行曲线拼接训练/);
+assert.match(curveHtml, /HXD1C途中瞭望技巧虚拟仿真/);
 assert.match(curveHtml, /爱国站—敬业站/);
-assert.match(curveHtml, /进入贯通试验/);
+assert.match(curveHtml, /进入途中瞭望考评/);
+assert.match(lookoutHtml, /data-training-app="lookout"/);
+assert.match(lookoutHtml, /发车与贯通20分＋途中瞭望80分/);
+assert.match(lookoutHtml, /未停车则该异常场景0分/);
 assert.match(continuityHtml, /data-training-app="continuity"/);
 assert.match(continuityHtml, /<base href="\.\.\/">/);
 assert.match(continuityHtml, /平稳起车20分＋贯通试验80分/);
@@ -88,4 +92,4 @@ assessmentLocks.command('auto-brake', 0);
 assert.equal(assessmentLocks.command('traction', 1), true);
 assert.deepEqual(assessmentLocks.state.assessmentScoreLocks, [2, 3], '专项首次牵引只能锁定缺失的基准尾压与平道缓解确认');
 
-console.log('Split pages valid: curve puzzle is the default page, continuity assessment is isolated under /continuity-test/, and the existing smooth-start page remains independently testable.');
+console.log('Split pages valid: the project entry points to /lookout-training/, the frozen continuity page remains isolated, and the existing supporting pages remain testable.');

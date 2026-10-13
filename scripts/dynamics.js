@@ -4,6 +4,9 @@ import { ROUTE_TRAINING_PROFILE } from './routeTrainingProfile.js';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const TRACTION_BRAKE_CYL_MAX = 15;
+const continuityEnabled = (state) => state.trainingScope === 'continuity' || state.trainingScope === 'lookout';
+const continuityPhaseActive = (state) => state.trainingScope === 'continuity'
+  || (state.trainingScope === 'lookout' && !state.continuityStageCompleted);
 
 const INITIAL_CHECK_LABELS = {
   traction: '牵引手柄零位',
@@ -85,7 +88,8 @@ export class TrainSimulation {
       continuityLkjOpenAttempted: false, continuityLkjObserved: false,
       continuityReleaseAttempted: false, continuityAutoBrakeReleasedCorrectly: false,
       continuityTractionRestoreAttempted: false, continuityTractionRestoredCorrectly: false,
-      continuityExpired: false, continuityDeductions: [], continuityDeductionKeys: [],
+      continuityExpired: false, continuityStageCompleted: false,
+      continuityDeductions: [], continuityDeductionKeys: [],
     };
     this.emit();
   }
@@ -94,7 +98,7 @@ export class TrainSimulation {
   reject(message) { this.state.rejected += 1; this.emit(message); return false; }
   deductContinuity(key, points, reason) {
     const s = this.state;
-    if (s.trainingScope !== 'continuity' || s.continuityDeductionKeys.includes(key)) return;
+    if (!continuityEnabled(s) || s.continuityDeductionKeys.includes(key)) return;
     s.continuityDeductionKeys.push(key);
     s.continuityDeductions.push({ key, points, reason });
     if (!s.assessmentSequenceErrors.includes(reason)) s.assessmentSequenceErrors.push(reason);
@@ -162,7 +166,7 @@ export class TrainSimulation {
     const s = this.state;
     if (!this.isAssessment() || s.assessmentFirstTractionRecorded) return;
     s.assessmentFirstTractionRecorded = true;
-    if (s.trainingScope === 'smooth-only' || s.trainingScope === 'continuity') {
+    if (s.trainingScope === 'smooth-only' || continuityEnabled(s)) {
       const smoothChecks = [
         [0, s.terrainSelected, '未选择平道或上坡道场景即动车'],
         [1, !s.parkingBrake, '起动前停放制动未缓解'],
@@ -403,7 +407,7 @@ export class TrainSimulation {
     if (id === 'tail-query') {
       s.tailQueryAttempted = true;
       if (!s.tailDeviceLinked) return this.reject('列尾装置尚未建立连接，请先输入6位列尾ID。');
-      const continuityQuery = s.trainingScope === 'continuity'
+      const continuityQuery = continuityPhaseActive(s)
         && s.wholeTrainStarted
         && s.tailPressureRiseCorrect
         && s.autoBrake === 0
@@ -637,7 +641,7 @@ export class TrainSimulation {
       this.emit(value === 'teaching' ? '已进入教学模式。' : '已进入考评模式：错误将记录在本次成绩中。'); return true;
     }
     if (id === 'continuity-lkj-open') {
-      if (s.trainingScope !== 'continuity') return true;
+      if (!continuityPhaseActive(s)) return true;
       s.continuityLkjOpenAttempted = true;
       if (s.continuitySpeedDeclining && !s.continuityReleaseAttempted) {
         s.continuityLkjObserved = true;
@@ -646,7 +650,7 @@ export class TrainSimulation {
       return true;
     }
     if (id === 'side-release-hold') {
-      if (s.trainingScope !== 'continuity') return true;
+      if (!continuityPhaseActive(s)) return true;
       const pressed = Boolean(value);
       if (pressed) {
         s.continuitySideReleaseActive = true;
@@ -838,7 +842,7 @@ export class TrainSimulation {
       this.invalidateInitialCheck('autoBrake');
       if (next >= 1 && s.trainPipe > 420) s.brakeTested = true;
       s.autoBrake = next;
-      if (s.trainingScope === 'continuity' && previous === 0 && next === 1 && s.wholeTrainStarted) {
+      if (continuityPhaseActive(s) && previous === 0 && next === 1 && s.wholeTrainStarted) {
         s.continuityBrakeAttempted = true;
         s.continuityBrakeAppliedAt = s.elapsed;
         s.continuityBrakeSpeed = s.speed;
@@ -867,7 +871,7 @@ export class TrainSimulation {
           if (!s.assessmentSequenceErrors.includes('上坡道未建立牵引电流即缓解自阀')) s.assessmentSequenceErrors.push('上坡道未建立牵引电流即缓解自阀');
         }
       }
-      if (s.trainingScope === 'continuity' && previous > 0 && next === 0 && s.continuityBrakeAttempted) {
+      if (continuityPhaseActive(s) && previous > 0 && next === 0 && s.continuityBrakeAttempted) {
         s.continuityReleaseAttempted = true;
         const correct = s.continuitySpeedDeclining && s.continuityTractionReducedCorrectly && s.continuityLkjObserved;
         s.continuityAutoBrakeReleasedCorrectly ||= correct;
@@ -893,7 +897,7 @@ export class TrainSimulation {
       this.invalidateInitialCheck('traction');
       const blockers = next > 0 ? this.tractionInterlockReasons(next) : [];
       if (blockers.length) {
-        if (s.trainingScope === 'continuity') {
+        if (continuityEnabled(s)) {
           // 考评模式允许手柄到达所选级位；设备联锁仍使实际牵引力保持为零，
           // 避免用“允许操作”换成不真实的动力效果。
           // 贯通试验制动阶段规定由6.0级退至5.0级。该动作是减级而非重新
@@ -918,7 +922,7 @@ export class TrainSimulation {
       }
       if (next > 0) this.recordAssessmentDepartureSnapshot();
       s.traction = next;
-      if (s.trainingScope === 'continuity') {
+      if (continuityPhaseActive(s)) {
         if (previous >= 6 && next === 5) {
           s.continuityTractionReductionAttempted = true;
           const correct = s.continuitySpeedDeclining && s.continuityBrakeAttempted;
@@ -930,9 +934,14 @@ export class TrainSimulation {
           const correct = s.continuityAutoBrakeReleasedCorrectly && s.autoBrake === 0;
           s.continuityTractionRestoredCorrectly ||= correct;
           if (!correct) this.deductContinuity('traction-restored-early', 3, '自阀未按规定缓解即恢复6.0级及以上牵引');
-          if (s.continuityTractionRestoredCorrectly && !s.completed) {
-            s.completed = true;
-            this.emit('贯通试验完成：已缓解自阀并恢复至6.0级及以上牵引。');
+          if (s.continuityTractionRestoredCorrectly) {
+            if (s.trainingScope === 'lookout') {
+              s.continuityStageCompleted = true;
+              this.emit('贯通试验完成：继续运行，进入途中瞭望考核。');
+            } else if (!s.completed) {
+              s.completed = true;
+              this.emit('贯通试验完成：已缓解自阀并恢复至6.0级及以上牵引。');
+            }
           }
         }
       }
@@ -996,7 +1005,7 @@ export class TrainSimulation {
     s.tailPipe += (s.trainPipe - s.tailPipe) * Math.min(1, dt * (emergencyBrake ? .9 : .34));
     // 停放制动为独立的弹簧储能制动，不应冒充空气制动缸压力；否则大闸缓解试验会永远无法完成。
     const autoCyl = s.mainRes > 600 ? clamp((600 - s.trainPipe) * (350 / 170), 0, 350) : 0; const individualCyl = s.independentBrake * 60;
-    const locomotiveAutoCyl = s.trainingScope === 'continuity' && s.continuitySideReleaseActive ? 0 : autoCyl;
+    const locomotiveAutoCyl = continuityPhaseActive(s) && s.continuitySideReleaseActive ? 0 : autoCyl;
     const cylTarget = Math.max(locomotiveAutoCyl, individualCyl); s.brakeCyl += (cylTarget - s.brakeCyl) * Math.min(1, dt * 2.3);
     // “制动缓解完成”与牵引联锁使用同一压力阈值，避免流程已变绿但牵引仍被残压阻断。
     if (s.brakeTested && s.autoBrake === 0 && s.trainPipe > 570 && s.brakeCyl < TRACTION_BRAKE_CYL_MAX) s.releaseObserved = true;
@@ -1005,7 +1014,7 @@ export class TrainSimulation {
     s.actualTraction += ((s.traction > 0 ? s.traction : 0) - s.actualTraction) * Math.min(1, dt * .72);
     const tractionAllowed = this.tractionInterlockReasons(s.traction).length === 0;
     const normalSpeedPowerFactor = Math.max(.34, 1 - s.speed / 125);
-    const notchSixSpeedFactor = s.trainingScope === 'continuity' && s.traction === 6
+    const notchSixSpeedFactor = continuityPhaseActive(s) && s.traction === 6
       ? clamp(
         (ROUTE_TRAINING_PROFILE.continuity.notchSixHardLimitKmh - s.speed)
           / (ROUTE_TRAINING_PROFILE.continuity.notchSixHardLimitKmh - ROUTE_TRAINING_PROFILE.continuity.notchSixTaperStartKmh),
@@ -1039,7 +1048,7 @@ export class TrainSimulation {
     }
     const electricBrake = s.traction < 0 ? Math.abs(s.traction) * 43000 : 0;
     const parkingBrakeForce = s.parkingBrake ? 450000 : 0;
-    const continuityTrainBrake = s.trainingScope === 'continuity' ? autoCyl * 980 : 0;
+    const continuityTrainBrake = continuityEnabled(s) ? autoCyl * 980 : 0;
     s.brakeForce = s.brakeCyl * 1250 + continuityTrainBrake + electricBrake + parkingBrakeForce;
     const terrain = getSmoothStartTerrain(s.terrainMode || 'level');
     const gradeResistance = s.trainingScope === 'smooth-only'
@@ -1064,11 +1073,11 @@ export class TrainSimulation {
       if (holdingReleased && s.tractionPowerEstablished) s.hillHoldReleasedCorrectly = true;
     }
     const routeLimit = s.lkjUnlockCorrect && s.lkjUnlockLimit > 0 ? s.lkjUnlockLimit : s.limitedStart ? 15 : 120;
-    const activeLimit = s.trainingScope === 'continuity' && s.traction === 6
+    const activeLimit = continuityPhaseActive(s) && s.traction === 6
       ? Math.min(routeLimit, ROUTE_TRAINING_PROFILE.continuity.notchSixHardLimitKmh)
       : routeLimit;
     s.speed = clamp(s.speed + actual * dt * 3.6, 0, activeLimit); s.distance += s.speed / 3.6 * dt;
-    if (s.trainingScope === 'continuity' && s.wholeTrainStarted && s.continuityTailPressureCorrect && !s.continuityBrakeAttempted) {
+    if (continuityPhaseActive(s) && s.wholeTrainStarted && s.continuityTailPressureCorrect && !s.continuityBrakeAttempted) {
       const minimum = ROUTE_TRAINING_PROFILE.continuity.targetSpeedKmh - ROUTE_TRAINING_PROFILE.continuity.speedToleranceKmh;
       const maximum = ROUTE_TRAINING_PROFILE.continuity.targetSpeedKmh + ROUTE_TRAINING_PROFILE.continuity.speedToleranceKmh;
       if (!s.continuitySpeedWindowEntered && s.speed >= minimum && s.speed <= maximum) {
@@ -1080,7 +1089,7 @@ export class TrainSimulation {
         this.deductContinuity('missed-speed-window', 3, '未在58～62 km/h操作窗口内及时施加初制动');
       }
     }
-    if (s.trainingScope === 'continuity' && s.continuityBrakeAttempted) {
+    if (continuityPhaseActive(s) && s.continuityBrakeAttempted) {
       s.continuityBrakeStartSpeed = Math.max(s.continuityBrakeStartSpeed || 0, s.speed);
       if (s.trainPipe <= 590) s.continuityExhaustEstablished = true;
       if (s.continuityExhaustEstablished
@@ -1172,6 +1181,12 @@ export class TrainSimulation {
       s.continuityExpired = true;
       s.completed = true;
       this.emit('列车已到达K231+738的2328通过信号机；第一闭塞分区考评结束，未完成项按0分计。');
+    }
+    if (s.trainingScope === 'lookout' && !s.continuityStageCompleted && !s.continuityExpired
+      && s.distance >= ROUTE_CONTEXT.firstBlockEndDistance) {
+      s.continuityExpired = true;
+      s.continuityStageCompleted = true;
+      this.emit('第一闭塞分区已通过，贯通试验未完成项按0分计；考核继续进入途中瞭望。');
     }
     this.emit();
   }

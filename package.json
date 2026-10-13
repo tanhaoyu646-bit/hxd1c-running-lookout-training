@@ -1,9 +1,9 @@
 {
-  "name": "passenger-train-operation-card-continuity-test",
+  "name": "hxd1c-running-lookout-training",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check scripts/credentialScenario.js && node --check scripts/scenario.js && node --check scripts/routeTrainingProfile.js && node --check scripts/curvePuzzleLogic.js && node --check scripts/curve-puzzle.js && node --check scripts/railAlignedPath.js && node --check scripts/dynamics.js && node --check scripts/procedure.js && node --check scripts/mstsRouteScene.js && node --check scripts/archive-2d-cabview-real-route.js && node --check tools/mobile-controls-smoke.mjs && node --check tools/lkj-mobile-smoke.mjs && node tools/test-training-scenarios.mjs && node tools/test-interface-assets.mjs && node tools/test-split-pages.mjs && node tools/test-continuity-assessment.mjs && node tools/test-route-extension.mjs"
+    "check": "node --check scripts/credentialScenario.js && node --check scripts/scenario.js && node --check scripts/routeTrainingProfile.js && node --check scripts/lookoutTrainingConfig.js && node --check scripts/lookoutAssessment.js && node --check scripts/curvePuzzleLogic.js && node --check scripts/curve-puzzle.js && node --check scripts/railAlignedPath.js && node --check scripts/dynamics.js && node --check scripts/procedure.js && node --check scripts/mstsRouteScene.js && node --check scripts/archive-2d-cabview-real-route.js && node --check tools/mobile-controls-smoke.mjs && node --check tools/lkj-mobile-smoke.mjs && node tools/test-training-scenarios.mjs && node tools/test-interface-assets.mjs && node tools/test-split-pages.mjs && node tools/test-continuity-assessment.mjs && node tools/test-lookout-assessment.mjs && node tools/test-route-extension.mjs"
   }
 }
 

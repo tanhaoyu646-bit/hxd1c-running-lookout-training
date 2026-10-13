@@ -1,4 +1,6 @@
 import { TRAIN_DYNAMICS } from './scenario.js?rev=start-scoring-v25';
+import { LOOKOUT_TRAINING_CONFIG } from './lookoutTrainingConfig.js';
+import { scoreLookoutEvent } from './lookoutAssessment.js';
 
 const scenarioSignalReady = (s) => s.scenarioId === 'weather'
   ? s.locomotiveSignalObserved
@@ -123,7 +125,42 @@ export const CONTINUITY_PROCEDURE = [
   ['缓解后牵引主手柄恢复至6.0级及以上', s => s.continuityTractionRestoreAttempted, 10, s => s.continuityTractionRestoredCorrectly],
 ];
 
+const lookoutSmoothScore = (s) => [
+  s.terrainSelected && s.terrainMode === 'level' && !s.parkingBrake,
+  baselineCorrect(s) && releaseRiseCorrect(s),
+  notchOneCorrect(s) && notchTwoRearCorrect(s),
+  progressiveCorrect(s) && s.lkjStartCorrect,
+].filter(Boolean).length;
+
+const lookoutContinuityScore = (s) => [
+  [s.continuityTailPressureCorrect, 2],
+  [s.continuityBrakeAppliedCorrectly, 3],
+  [s.continuityBrakeAppliedCorrectly && s.continuitySideReleaseCorrect, 3],
+  [s.continuityTractionReducedCorrectly, 3],
+  [s.continuityLkjObserved, 1],
+  [s.continuityAutoBrakeReleasedCorrectly, 2],
+  [s.continuityTractionRestoredCorrectly, 2],
+].reduce((sum, [passed, weight]) => sum + (passed ? weight : 0), 0);
+
+const lookoutEventResolved = (s, id) => ['complete', 'failed'].includes(s.lookout?.events?.[id]?.status);
+const lookoutEventScore = (s, id) => {
+  const config = LOOKOUT_TRAINING_CONFIG.events.find((item) => item.id === id);
+  return scoreLookoutEvent(config, s.lookout?.events?.[id]);
+};
+
+// 途中瞭望考核总分100：站内平稳发车4、贯通试验16、正常道口5，
+// 隧道轮廓异常/钢轨反光中断/侵限道口各25。场景顺序固定。
+export const LOOKOUT_PROCEDURE = [
+  ['站内平稳发车', s => s.wholeTrainStarted || s.continuityExpired, 4, lookoutSmoothScore],
+  ['第一闭塞分区贯通试验', s => s.continuityStageCompleted || s.continuityExpired, 16, lookoutContinuityScore],
+  ['正常道口鸣笛通过', s => lookoutEventResolved(s, 'normal-crossing'), 5, s => lookoutEventScore(s, 'normal-crossing')],
+  ['隧道轮廓异常预判处置', s => lookoutEventResolved(s, 'tunnel-hazard'), 25, s => lookoutEventScore(s, 'tunnel-hazard')],
+  ['钢轨反光中断预判处置', s => lookoutEventResolved(s, 'rail-glint-break'), 25, s => lookoutEventScore(s, 'rail-glint-break')],
+  ['侵限道口预判处置', s => lookoutEventResolved(s, 'intrusion-crossing'), 25, s => lookoutEventScore(s, 'intrusion-crossing')],
+];
+
 export function getProcedure(state) {
+  if (state?.trainingScope === 'lookout') return LOOKOUT_PROCEDURE;
   if (state?.trainingScope === 'continuity') return CONTINUITY_PROCEDURE;
   if (state?.trainingScope !== 'smooth-only') return PROCEDURE;
   return state.terrainMode === 'uphill' ? SMOOTH_UPHILL_PROCEDURE : SMOOTH_LEVEL_PROCEDURE;
@@ -169,14 +206,15 @@ export function scoreRun(state) {
           const scored = scoreTest(state);
           return typeof scored === 'number' ? Math.max(0, Math.min(weight, scored)) : scored ? weight : 0;
         })();
-    const earned = scoreLocks.has(index) ? 0 : rawEarned;
+    const locked = state.trainingScope !== 'lookout' && scoreLocks.has(index);
+    const earned = locked ? 0 : rawEarned;
     return {
       label,
       weight,
       complete: Boolean(workflowTest(state)),
       correct: earned === weight,
       earned,
-      locked: scoreLocks.has(index),
+      locked,
     };
   });
   const base = itemScores.reduce((sum, item) => sum + item.earned, 0);
@@ -197,7 +235,9 @@ export function scoreRun(state) {
     + (state.rollbackRisk ? 8 : 0)
     + (state.tractionDelayExceeded ? 5 : 0));
   const continuityDeductions = (state.continuityDeductions || []).reduce((sum, item) => sum + Number(item.points || 0), 0);
-  const deductions = state.trainingScope === 'continuity'
+  const deductions = state.trainingScope === 'lookout'
+    ? 0
+    : state.trainingScope === 'continuity'
     ? Math.min(30, Math.round(continuityOperationalDeductions * .2) + continuityDeductions)
     : operationalDeductions;
   return { score: Math.max(0, Math.min(100, base - deductions)), completed: p.complete.filter(Boolean).length, deductions, itemScores };
