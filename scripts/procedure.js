@@ -148,15 +148,15 @@ const lookoutEventScore = (s, id) => {
   return scoreLookoutEvent(config, s.lookout?.events?.[id]);
 };
 
-// 途中瞭望考核总分100：站内平稳发车4、贯通试验16、正常道口5，
-// 隧道轮廓异常/钢轨反光中断/侵限道口各25。场景顺序固定。
+// 途中瞭望考核总分100：站内平稳发车4、贯通试验16、正常道口10，
+// 隧道轮廓异常20、钢轨反光中断20、侵限道口30。场景顺序固定。
 export const LOOKOUT_PROCEDURE = [
   ['站内平稳发车', s => s.wholeTrainStarted || s.continuityExpired, 4, lookoutSmoothScore],
   ['第一闭塞分区贯通试验', s => s.continuityStageCompleted || s.continuityExpired, 16, lookoutContinuityScore],
-  ['正常道口鸣笛通过', s => lookoutEventResolved(s, 'normal-crossing'), 5, s => lookoutEventScore(s, 'normal-crossing')],
-  ['隧道轮廓异常预判处置', s => lookoutEventResolved(s, 'tunnel-hazard'), 25, s => lookoutEventScore(s, 'tunnel-hazard')],
-  ['钢轨反光中断预判处置', s => lookoutEventResolved(s, 'rail-glint-break'), 25, s => lookoutEventScore(s, 'rail-glint-break')],
-  ['侵限道口预判处置', s => lookoutEventResolved(s, 'intrusion-crossing'), 25, s => lookoutEventScore(s, 'intrusion-crossing')],
+  ['正常道口鸣笛通过', s => lookoutEventResolved(s, 'normal-crossing'), 10, s => lookoutEventScore(s, 'normal-crossing')],
+  ['隧道轮廓异常处置及坡道起车', s => lookoutEventResolved(s, 'tunnel-hazard'), 20, s => lookoutEventScore(s, 'tunnel-hazard')],
+  ['钢轨反光中断处置及坡道起车', s => lookoutEventResolved(s, 'rail-glint-break'), 20, s => lookoutEventScore(s, 'rail-glint-break')],
+  ['侵限道口处置及坡道起车', s => lookoutEventResolved(s, 'intrusion-crossing'), 30, s => lookoutEventScore(s, 'intrusion-crossing')],
 ];
 
 export function getProcedure(state) {

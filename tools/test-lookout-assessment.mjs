@@ -24,8 +24,12 @@ assert(
 );
 assert.equal(
   eventConfig('rail-glint-break').hazardDistance - eventConfig('rail-glint-break').revealDistance,
-  400,
-  '钢轨反光中断应从400 m外进入观察范围',
+  500,
+  '钢轨反光中断应从500 m外进入观察范围',
+);
+assert(
+  eventConfig('rail-glint-break').hazardDistance - eventConfig('tunnel-hazard').hazardDistance >= 1000,
+  '隧道停车点到钢轨异常点至少应留出1 km恢复运行距离',
 );
 assert.equal(
   eventConfig('rail-glint-break').glintBreakEndDistance - eventConfig('rail-glint-break').hazardDistance,
@@ -34,6 +38,7 @@ assert.equal(
 );
 assert.equal(LOOKOUT_TRAINING_CONFIG.throughSignals.length,5,'压缩线路应保留5架通过信号机');
 assert(LOOKOUT_TRAINING_CONFIG.finishDistance <= 6500, '课堂考核线路不应保留原30 km空驶长度');
+assert.equal(LOOKOUT_TRAINING_CONFIG.events.reduce((sum, event) => sum + event.weight, 0), 80, '途中场景分值应合计80分');
 
 {
   const state = makeState();
@@ -44,7 +49,7 @@ assert(LOOKOUT_TRAINING_CONFIG.finishDistance <= 6500, '课堂考核线路不应
   assessment.recordCommand('horn-start', undefined, state);
   state.distance = config.passDistance;
   assessment.update(state);
-  assert.equal(scoreLookoutEvent(config, state.lookout.events[config.id]), 5);
+  assert.equal(scoreLookoutEvent(config, state.lookout.events[config.id]), 10);
 }
 
 for (const id of ['tunnel-hazard', 'rail-glint-break', 'intrusion-crossing']) {
@@ -60,11 +65,46 @@ for (const id of ['tunnel-hazard', 'rail-glint-break', 'intrusion-crossing']) {
   if (config.requiredHornCount === 2) assessment.recordCommand('horn-start', undefined, state);
   state.distance = config.hazardDistance - 30;
   state.speed = 0;
+  state.autoBrake = 5;
+  state.independentBrake = 5;
   assessment.update(state);
   assessment.recordCommand('independent', 5, state);
-  state.speed = 5;
+  assessment.recordCommand('tail-query', undefined, state);
+  state.independentBrake = 0;
+  assessment.recordCommand('independent', 0, state);
+  assessment.recordCommand('traction', 1, state);
+  state.autoBrake = 0;
+  assessment.recordCommand('auto', 0, state);
+  assessment.recordCommand('tail-query', undefined, state);
+  state.speed = 6;
   assessment.update(state);
-  assert.equal(scoreLookoutEvent(config, state.lookout.events[id]), 25, `${id} should earn full score`);
+  assert.equal(scoreLookoutEvent(config, state.lookout.events[id]), config.weight, `${id} should earn full score`);
+}
+
+{
+  const state = makeState();
+  const assessment = new LookoutAssessment(state);
+  const config = eventConfig('tunnel-hazard');
+  resolvePrevious(state, config.id);
+  state.distance = config.revealDistance;
+  assessment.update(state);
+  assessment.recordCommand('horn-start', undefined, state);
+  assessment.recordCommand('auto', 5, state);
+  assessment.recordCommand('traction', 0, state);
+  state.distance = config.hazardDistance - 25;
+  state.speed = 0;
+  state.autoBrake = 5;
+  state.independentBrake = 5;
+  assessment.update(state);
+  assessment.recordCommand('independent', 5, state);
+  assessment.recordCommand('tail-query', undefined, state);
+  state.independentBrake = 0;
+  assessment.recordCommand('independent', 0, state);
+  assessment.recordCommand('traction', 1, state);
+  state.autoBrake = 0;
+  assessment.recordCommand('auto', 0, state);
+  assessment.recordCommand('tail-query', undefined, state);
+  assert.equal(state.lookout.events[config.id].restartSequenceCorrect, true, '停车后坡道起车顺序应完整记录');
 }
 
 {
@@ -98,7 +138,7 @@ for (const id of ['tunnel-hazard', 'rail-glint-break', 'intrusion-crossing']) {
   state.speed = 0;
   assessment.update(state);
   assessment.recordCommand('independent', 5, state);
-  assert.equal(scoreLookoutEvent(config, state.lookout.events[config.id]), 22, '第二次鸣笛早于牵引退零应失去对应3分');
+  assert.equal(scoreLookoutEvent(config, state.lookout.events[config.id]), 18, '第二次鸣笛早于牵引退零且未完成坡道起车时应按动作计分');
 }
 
 {
@@ -119,9 +159,12 @@ for (const id of ['tunnel-hazard', 'rail-glint-break', 'intrusion-crossing']) {
       secondHornAfterTractionZero: config.requiredHornCount === 2, emergencyCorrectOrder: config.kind === 'emergency',
       tractionZeroCorrectOrder: config.kind === 'emergency', stoppedBeforeHazard: config.kind === 'emergency',
       independentFullAfterStop: config.kind === 'emergency', unnecessaryEmergency: false,
+      restartTailBaselineQueried: config.kind === 'emergency', restartIndependentReleased: config.kind === 'emergency',
+      restartTractionOneApplied: config.kind === 'emergency', restartAutoReleased: config.kind === 'emergency',
+      restartTailReleaseQueried: config.kind === 'emergency', restartSequenceCorrect: config.kind === 'emergency',
     });
   }
-  assert.equal(scoreRun(state).score, 100, '途中瞭望总分应严格由4+16+5+25+25+25组成，不重复叠加通用扣分');
+  assert.equal(scoreRun(state).score, 100, '途中瞭望总分应严格由4+16+10+20+20+30组成，不重复叠加通用扣分');
 }
 
-console.log('Lookout assessment valid: fixed order, horn/brake/traction sequence, stop-before-hazard gate, single-valve securement, and continue-after-failure.');
+console.log('Lookout assessment valid: 20/10/20/20/30 scoring, emergency handling, restart sequence, stop-before-hazard gate, and continue-after-failure.');

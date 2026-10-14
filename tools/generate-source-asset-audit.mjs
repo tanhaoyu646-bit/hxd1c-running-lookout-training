@@ -260,7 +260,7 @@ const audit = {
     tunnelStart: 3200,
     tunnelHazard: 3520,
     tunnelEnd: 3500,
-    railGlintHazard: 4100,
+    railGlintHazard: 4600,
     intrusionCrossing: 5600,
     finish: 6000,
   },
@@ -293,7 +293,7 @@ const markdown = `# NEIYI途中瞭望原游戏素材审计\n\n`
   + `## 独立查看器\n\n`
   + `打开本目录的 \`index.html\` 可切换查看原道口组合和原隧道组合。固定预览见 \`crossing-preview.png\` 与 \`tunnel-preview.png\`。\n\n`
   + `## 建议里程\n\n`
-  + `贯通试验结束1750 m；正常道口2200 m；隧道入口3200 m、出口3500 m、洞外塌方3520 m；钢轨反光异常4100 m；侵限道口5600 m；6000 m结算。\n\n`
+  + `贯通试验结束1750 m；正常道口2200 m；隧道入口3200 m、出口3500 m、洞外塌方3520 m；钢轨反光异常4600 m；侵限道口5600 m；6000 m结算。\n\n`
   + `## 进入场景修改阶段的门槛\n\n`
   + `- 原始轨道与信号机在独立查看器中方向、比例和材质通过人工确认。\n`
   + `- 隧道组合保持源四元数后接缝连续。\n`

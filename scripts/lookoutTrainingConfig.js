@@ -38,7 +38,8 @@ export const LOOKOUT_TRAINING_CONFIG = Object.freeze({
       hazardDistance: 2200,
       passDistance: 2250,
       requiredHornCount: 1,
-      weight: 5,
+      weight: 10,
+      points: Object.freeze({ horn: 10 }),
     }),
     Object.freeze({
       id: LOOKOUT_EVENT_IDS.TUNNEL_HAZARD,
@@ -53,24 +54,34 @@ export const LOOKOUT_TRAINING_CONFIG = Object.freeze({
       hazardDistance: 3520,
       passDistance: 3570,
       requiredHornCount: 1,
-      weight: 25,
+      weight: 20,
+      points: Object.freeze({
+        firstHorn: 2, emergency: 3, tractionZero: 2, stop: 3, independentFull: 2,
+        restartTailBaseline: 1, restartIndependent: 1, restartTractionOne: 2,
+        restartAutoRelease: 2, restartTailRelease: 2,
+      }),
     }),
     Object.freeze({
       id: LOOKOUT_EVENT_IDS.RAIL_GLINT_BREAK,
       label: '钢轨光带中断',
       kind: 'emergency',
       visualKind: 'rail',
-      // 3.85–4.10 km是本压缩走廊的长直线段，边界放在直线末端，
-      // 避免原4.5 km曲线遮挡导致学生只能在近距离看见异常。
-      glintStartDistance: 3600,
-      revealDistance: 3700,
-      hazardDistance: 4100,
-      passDistance: 4150,
-      // 反光在危险边界处突然中断，后续180 m保持暗哑，便于从400 m外预判。
-      glintBreakEndDistance: 4280,
-      glintEndDistance: 4400,
+      // 隧道停车点之后留出约1.1 km恢复运行距离，避免刚起车即再次制动。
+      // 正常反光提前500 m出现，学生完成坡道起车后仍有完整的观察和处置窗口。
+      glintStartDistance: 4000,
+      revealDistance: 4100,
+      hazardDistance: 4600,
+      passDistance: 4650,
+      // 反光在危险边界处突然中断，后续180 m保持暗哑。
+      glintBreakEndDistance: 4780,
+      glintEndDistance: 5000,
       requiredHornCount: 1,
-      weight: 25,
+      weight: 20,
+      points: Object.freeze({
+        firstHorn: 2, emergency: 3, tractionZero: 2, stop: 3, independentFull: 2,
+        restartTailBaseline: 1, restartIndependent: 1, restartTractionOne: 2,
+        restartAutoRelease: 2, restartTailRelease: 2,
+      }),
     }),
     Object.freeze({
       id: LOOKOUT_EVENT_IDS.INTRUSION_CROSSING,
@@ -81,7 +92,12 @@ export const LOOKOUT_TRAINING_CONFIG = Object.freeze({
       hazardDistance: 5600,
       passDistance: 5650,
       requiredHornCount: 2,
-      weight: 25,
+      weight: 30,
+      points: Object.freeze({
+        firstHorn: 2, secondHorn: 2, emergency: 4, tractionZero: 2, stop: 6, independentFull: 4,
+        restartTailBaseline: 2, restartIndependent: 2, restartTractionOne: 2,
+        restartAutoRelease: 2, restartTailRelease: 2,
+      }),
     }),
   ]),
 });

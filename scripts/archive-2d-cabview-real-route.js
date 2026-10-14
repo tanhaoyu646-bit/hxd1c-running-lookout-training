@@ -677,7 +677,7 @@ function openDeliveredCredential(){
 function buildTrainingControls(){
   const root=$('#training-controls');if(!root)return;
   if(TRAINING_APP==='lookout'){
-    root.innerHTML='<div class="continuity-summary"><b>固定考评线路 · 总分100分</b><br>站内平稳发车4分、贯通试验16分、正常道口5分；隧道轮廓异常、钢轨反光中断、侵限道口各25分。异常点未停车则该场景0分，考核继续。</div><button type="button" class="continuity-reset" data-continuity-reset>重新开始本次考评</button><p class="training-state" data-training-state>当前：考评模式 · 站内平稳发车</p>';
+    root.innerHTML='<div class="continuity-summary"><b>固定考评线路 · 总分100分</b><br>站内平稳发车4分、贯通试验16分、正常道口10分；隧道异常20分、钢轨反光中断20分、侵限道口30分。三类异常均考核紧急处置和停车后坡道起车；未在危险点前停车则该场景0分。</div><button type="button" class="continuity-reset" data-continuity-reset>重新开始本次考评</button><p class="training-state" data-training-state>当前：考评模式 · 站内平稳发车</p>';
     root.querySelector('[data-continuity-reset]').addEventListener('click',()=>location.reload());
     return;
   }

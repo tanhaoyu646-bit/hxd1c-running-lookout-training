@@ -50,8 +50,8 @@ export class MstsRouteScene {
     this.renderer.toneMappingExposure = 1.05;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color('#a7bdca');
-    this.scene.fog = new THREE.Fog('#a7b9c2', 500, 1600);
-    this.camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.15, 2200);
+    this.scene.fog = new THREE.Fog('#a7b9c2', 500, 2200);
+    this.camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.15, 3000);
     this.routeRoot = new THREE.Group();
     this.routeRoot.name = 'MSTS_ROUTE_ROOT';
     this.scene.add(this.routeRoot);
@@ -717,16 +717,23 @@ export class MstsRouteScene {
     // 这样学生从约400 m外看到的视觉边界，与必须停车的位置一致。
     const gapStart = Math.max(0, Number(railEvent?.hazardDistance || 0));
     const gapEnd = Math.min(maxDistance, Number(railEvent?.glintBreakEndDistance || gapStart + 180));
+    const railBodyMaterial = new THREE.MeshPhysicalMaterial({
+      color: '#46535a',
+      metalness: 0.9,
+      roughness: 0.18,
+      clearcoat: 0.42,
+      clearcoatRoughness: 0.12,
+    });
+    railBodyMaterial.name = 'LOOKOUT_RAIL_STEEL_BODY';
     const polishedMaterial = new THREE.MeshPhysicalMaterial({
-      // 正常区段是真实的立体轨头材质，不是悬浮在道床上的发光线。
-      // 在课堂常见显示器上保留较强的冷色高光，以便与异常段对比。
-      color: '#f6fcff',
+      // 亮面是实体轨头顶盖，不是悬浮线条；远处依靠金属高光和适度自发光保持辨识度。
+      color: '#dcecf2',
       metalness: 1,
-      roughness: 0.035,
+      roughness: 0.025,
       clearcoat: 1,
-      clearcoatRoughness: 0.018,
-      emissive: '#b9dce8',
-      emissiveIntensity: 0.62,
+      clearcoatRoughness: 0.012,
+      emissive: '#9fcbd8',
+      emissiveIntensity: 0.72,
     });
     polishedMaterial.name = 'LOOKOUT_POLISHED_RAIL_STEEL';
     // 异常段钢轨实体仍然存在，但轨面不参与环境高光计算，避免主光源把“中断”重新照亮。
@@ -740,8 +747,11 @@ export class MstsRouteScene {
     const railRoot = new THREE.Group();
     railRoot.name = 'LOOKOUT_CONTINUOUS_SOURCE_STYLE_RAILS';
 
-    const buildRailSection = (railOffset, startDistance, endDistance, material, suffix) => {
+    const buildRailSection = (railOffset, startDistance, endDistance, material, suffix, dimensions = {}) => {
       if (endDistance - startDistance < 0.5) return;
+      const sectionHalfWidth = dimensions.halfWidth ?? halfWidth;
+      const sectionBaseHeight = dimensions.baseHeight ?? baseHeight;
+      const sectionHeight = dimensions.railHeight ?? railHeight;
       const positions = [];
       const indices = [];
       const sampleDistances = [];
@@ -749,11 +759,11 @@ export class MstsRouteScene {
       sampleDistances.push(endDistance);
       sampleDistances.forEach((distance, index) => {
         const { point, right, up } = this.getLookoutPathFrame3D(distance);
-        const center = point.clone().addScaledVector(right, railOffset).addScaledVector(up, baseHeight);
-        const bottomLeft = center.clone().addScaledVector(right, -halfWidth);
-        const bottomRight = center.clone().addScaledVector(right, halfWidth);
-        const topLeft = bottomLeft.clone().addScaledVector(up, railHeight);
-        const topRight = bottomRight.clone().addScaledVector(up, railHeight);
+        const center = point.clone().addScaledVector(right, railOffset).addScaledVector(up, sectionBaseHeight);
+        const bottomLeft = center.clone().addScaledVector(right, -sectionHalfWidth);
+        const bottomRight = center.clone().addScaledVector(right, sectionHalfWidth);
+        const topLeft = bottomLeft.clone().addScaledVector(up, sectionHeight);
+        const topRight = bottomRight.clone().addScaledVector(up, sectionHeight);
         positions.push(
           bottomLeft.x, bottomLeft.y, bottomLeft.z,
           bottomRight.x, bottomRight.y, bottomRight.z,
@@ -785,9 +795,27 @@ export class MstsRouteScene {
     };
 
     for (const railOffset of [-gaugeHalf, gaugeHalf]) {
-      buildRailSection(railOffset, 0, gapStart, polishedMaterial, 'POLISHED_BEFORE');
-      buildRailSection(railOffset, gapStart, gapEnd, dullMaterial, 'GLINT_BREAK');
-      buildRailSection(railOffset, gapEnd, maxDistance, polishedMaterial, 'POLISHED_AFTER');
+      // 钢轨本体贯通全线，反光异常只改变顶面材质，不制造真实断轨或接缝。
+      buildRailSection(railOffset, 0, maxDistance, railBodyMaterial, 'BODY', {
+        halfWidth: 0.058,
+        baseHeight: 0.18,
+        railHeight: 0.13,
+      });
+      buildRailSection(railOffset, 0, gapStart, polishedMaterial, 'POLISHED_BEFORE', {
+        halfWidth: 0.068,
+        baseHeight: 0.31,
+        railHeight: 0.026,
+      });
+      buildRailSection(railOffset, gapStart, gapEnd, dullMaterial, 'GLINT_BREAK', {
+        halfWidth: 0.068,
+        baseHeight: 0.31,
+        railHeight: 0.026,
+      });
+      buildRailSection(railOffset, gapEnd, maxDistance, polishedMaterial, 'POLISHED_AFTER', {
+        halfWidth: 0.068,
+        baseHeight: 0.31,
+        railHeight: 0.026,
+      });
     }
     this.routeRoot.add(railRoot);
     this.lookoutVisuals.railGlint = railRoot;
@@ -1302,7 +1330,8 @@ export class MstsRouteScene {
       const hazard = new THREE.Group();hazard.name='LOOKOUT_INTRUSION_ACTORS';
       const vehicle = this.createSourceShapeObject(repairAssetData, 'Car1.s', 'LOOKOUT_SOURCE_SEDAN');
       if (!vehicle) throw new Error('原游戏轿车模型数据无效。');
-      vehicle.rotation.y = Math.PI / 2;
+      // Car1.s 的车头朝局部 -Z；旋转后使车头与从左向右的 +X 运动方向一致。
+      vehicle.rotation.y = -Math.PI / 2;
       vehicle.position.set(-24, 0.16, 0.12);
       hazard.add(vehicle);
       const person = new THREE.Group();
@@ -1446,8 +1475,8 @@ export class MstsRouteScene {
     this.renderer.toneMappingExposure=insideTunnel ? .46 : 1.05;
     // 洞内依靠实体洞壁和较低曝光形成黑暗；高亮面不参与色调映射，
     // 因而保持近乎白色的出口光斑，形成洞内外高反差。
-    if(insideTunnel){this.scene.background.set('#a7bdca');this.scene.fog.color.set('#a7b9c2');this.scene.fog.near=500;this.scene.fog.far=1600;}
-    else {this.scene.background.set(this.scenarioId==='weather'?'#83929a':'#a7bdca');this.scene.fog.color.set(this.scenarioId==='weather'?'#83929a':'#a7b9c2');this.scene.fog.near=500;this.scene.fog.far=1600;}
+    if(insideTunnel){this.scene.background.set('#a7bdca');this.scene.fog.color.set('#a7b9c2');this.scene.fog.near=500;this.scene.fog.far=2200;}
+    else {this.scene.background.set(this.scenarioId==='weather'?'#83929a':'#a7bdca');this.scene.fog.color.set(this.scenarioId==='weather'?'#83929a':'#a7b9c2');this.scene.fog.near=500;this.scene.fog.far=2200;}
     const tunnelEvent=attempt?.events?.['tunnel-hazard'];
     if(this.lookoutVisuals.tunnelAnomaly)this.lookoutVisuals.tunnelAnomaly.visible=!tunnelEvent?.cleared;
     const backlight=this.lookoutVisuals.tunnelExitBacklight;
@@ -1489,7 +1518,7 @@ export class MstsRouteScene {
     const weather = this.scenarioId === 'weather';
     const remaining = Math.max(0, ROUTE_CONTEXT.departureSignalDistance - this.distance);
     let near = 500;
-    let far = 1600;
+    let far = 2200;
     let lampVisibility = 1;
     if (weather) {
       if (remaining > ROUTE_CONTEXT.weatherSignalApproachDistance) {
