@@ -57,6 +57,8 @@ const summary = await evaluate(`(()=>{
     trainingMode:window.__trainingSim.state.trainingMode,
     controlsText:document.querySelector('#training-controls').innerText,
     sceneNames:names.filter((name)=>name.startsWith('LOOKOUT_')),
+    terrainTiles:window.__routeScene.routeRoot.getObjectByName('MSTS_SOURCE_TERRAIN')?.children.length||0,
+    selectedRails:names.filter((name)=>name.startsWith('SELECTED_ROUTE_RAIL_')).length,
     scoreWeights:[...document.querySelectorAll('#procedure li')].map((item)=>item.innerText),
     overflowX:document.documentElement.scrollWidth>document.documentElement.clientWidth+1,
     stage:[Math.round(document.querySelector('#stage').getBoundingClientRect().width),Math.round(document.querySelector('#stage').getBoundingClientRect().height)],
@@ -71,6 +73,9 @@ assert.equal(summary.trainingScope,'lookout');
 assert.equal(summary.trainingMode,'assessment');
 assert(summary.pathLength>LOOKOUT_TRAINING_CONFIG.finishDistance,'线路长度不足以覆盖结算点');
 for(const name of ['LOOKOUT_NORMAL_CROSSING','LOOKOUT_TUNNEL','LOOKOUT_TUNNEL_CLEARANCE_ANOMALY','LOOKOUT_RAIL_GLINT','LOOKOUT_INTRUSION_CROSSING','LOOKOUT_INTRUSION_ACTORS'])assert(summary.sceneNames.includes(name),`缺少三维对象 ${name}`);
+assert.equal(summary.terrainTiles,8,'原线路地形瓦片未完整加载');
+assert.equal(summary.selectedRails,2,'连续左右钢轨未完整生成');
+assert(summary.sceneNames.filter((name)=>name.startsWith('LOOKOUT_SOURCE_TUNNEL_SEGMENT_')).length>=6,'原线路隧道段未完整加载');
 assert.match(summary.controlsText,/平稳发车4分、贯通试验16分/);
 assert.equal(summary.overflowX,false);
 if(mobile){assert.deepEqual(summary.stage,[viewportWidth,viewportHeight],'移动端舞台应填满横屏视口');assert.equal(summary.mobileControls,true,'移动端控制模式未启用');assert.equal(summary.metricsToggleVisible,true,'移动端运行数据按钮不可见');}

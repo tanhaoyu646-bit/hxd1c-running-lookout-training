@@ -7,6 +7,7 @@ import { LOOKOUT_TRAINING_CONFIG } from './lookoutTrainingConfig.js';
 // 因此所有三维资源必须相对 import.meta.url 解析，不能使用普通 ../assets 字符串。
 const SOURCE_PATH = new URL('../assets/msts-neiyi-corridor/neiyi-lookout-full-scene.json', import.meta.url).href;
 const ROUTE_PATH = new URL('../assets/msts-neiyi/neiyi-5635-trackdb-path.json', import.meta.url).href;
+const TERRAIN_PATH = new URL('../assets/msts-neiyi-corridor/neiyi-lookout-terrain.json', import.meta.url).href;
 const TEXTURE_PATH = new URL('../assets/msts-neiyi-corridor/textures/', import.meta.url).href;
 // GitHub Pages 区分大小写；原游戏导出中的三处引用大小写与发布文件名不同。
 const TEXTURE_FILE_ALIASES = Object.freeze({
@@ -93,17 +94,21 @@ export class MstsRouteScene {
 
   async load() {
     try {
-      const [sceneResponse, pathResponse] = await Promise.all([
+      const [sceneResponse, pathResponse, terrainResponse] = await Promise.all([
         fetch(SOURCE_PATH, { cache: 'no-store' }),
         fetch(ROUTE_PATH, { cache: 'no-store' }),
+        fetch(TERRAIN_PATH, { cache: 'no-store' }),
       ]);
       if (!sceneResponse.ok) throw new Error(`路线场景加载失败：HTTP ${sceneResponse.status}`);
       if (!pathResponse.ok) throw new Error(`轨道中心线加载失败：HTTP ${pathResponse.status}`);
-      const [sceneData, pathData] = await Promise.all([
+      if (!terrainResponse.ok) throw new Error(`原线路地形加载失败：HTTP ${terrainResponse.status}`);
+      const [sceneData, pathData, terrainData] = await Promise.all([
         sceneResponse.json(),
         pathResponse.json(),
+        terrainResponse.json(),
       ]);
       this.buildRoutePath(pathData, sceneData);
+      this.buildTerrain(terrainData);
       this.buildRoute(sceneData);
       this.buildPassengerConsist(12);
       const renderedRouteDistance = Math.min(this.pathLength, LOOKOUT_TRAINING_CONFIG.finishDistance + 350);
@@ -112,7 +117,7 @@ export class MstsRouteScene {
       if (ROUTE_RENDER_OPTIONS.railHighlights) this.buildRailHighlights(renderedRouteDistance, railEvent);
       if (ROUTE_RENDER_OPTIONS.sourceDepartureSignal) this.buildSourceDepartureSignal(sceneData);
       this.buildSourceRouteSignalLights(sceneData);
-      this.buildLookoutTrainingScenery();
+      this.buildLookoutTrainingScenery(sceneData);
       this.ready = true;
       this.applyCamera();
       this.canvas.dispatchEvent(new CustomEvent('route-ready', {
@@ -123,6 +128,72 @@ export class MstsRouteScene {
       this.canvas.dispatchEvent(new CustomEvent('route-error', { detail: error }));
       throw error;
     }
+  }
+
+  buildTerrain(data) {
+    const tileSize = Number(data?.source?.tileSize) || 2048;
+    const [originX, , originZ] = data?.source?.origin || [604.624, 1289.16, -775.032];
+    const [originTileX, originTileZ] = data?.source?.originTile || [-5742, 14701];
+    const terrainTexture = this.textureLoader.load(`${TEXTURE_PATH}terrain.png`);
+    terrainTexture.colorSpace = THREE.SRGBColorSpace;
+    terrainTexture.wrapS = terrainTexture.wrapT = THREE.RepeatWrapping;
+    terrainTexture.repeat.set(18, 18);
+    terrainTexture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+    const microTexture = this.textureLoader.load(`${TEXTURE_PATH}microtex.png`);
+    microTexture.wrapS = microTexture.wrapT = THREE.RepeatWrapping;
+    microTexture.repeat.set(18, 18);
+    const material = new THREE.MeshStandardMaterial({
+      color: '#8a9878',
+      map: terrainTexture,
+      bumpMap: microTexture,
+      bumpScale: 0.28,
+      roughness: 0.98,
+      metalness: 0,
+      side: THREE.DoubleSide,
+    });
+    const root = new THREE.Group();
+    root.name = 'MSTS_SOURCE_TERRAIN';
+    for (const tile of data?.tiles || []) {
+      const resolution = Number(tile.resolution) || 0;
+      if (resolution < 3 || tile.heights?.length !== resolution * resolution) continue;
+      const positions = [];
+      const uvs = [];
+      const indices = [];
+      for (let row = 0; row < resolution; row += 1) {
+        const rowRatio = row / (resolution - 1);
+        const localZ = tileSize * 0.5 - rowRatio * tileSize;
+        for (let column = 0; column < resolution; column += 1) {
+          const columnRatio = column / (resolution - 1);
+          const localX = -tileSize * 0.5 + columnRatio * tileSize;
+          const x = -(((tile.tileX - originTileX) * tileSize) + localX - originX);
+          const z = ((tile.tileZ - originTileZ) * tileSize) + localZ - originZ;
+          positions.push(x, Number(tile.heights[row * resolution + column]) - 0.12, z);
+          uvs.push(columnRatio, 1 - rowRatio);
+        }
+      }
+      for (let row = 0; row < resolution - 1; row += 1) {
+        for (let column = 0; column < resolution - 1; column += 1) {
+          const a = row * resolution + column;
+          const b = a + 1;
+          const c = a + resolution;
+          const d = c + 1;
+          indices.push(a, c, b, b, c, d);
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = `MSTS_TERRAIN_${tile.tileX}_${tile.tileZ}`;
+      mesh.frustumCulled = true;
+      root.add(mesh);
+    }
+    this.routeRoot.add(root);
+    this.terrainRoot = root;
+    if (root.children.length && this.ground) this.ground.visible = false;
   }
 
   getMaterial(definition) {
@@ -154,9 +225,36 @@ export class MstsRouteScene {
     return material;
   }
 
+  createSourceShapeObject(data, fileName, name = fileName) {
+    const shape = data?.shapes?.[fileName];
+    if (!shape?.groups?.length) return null;
+    const root = new THREE.Group();
+    root.name = name;
+    shape.groups.forEach((group, groupIndex) => {
+      if (!group.positions?.length) return;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(group.positions, 3));
+      if (group.uvs?.length === (group.positions.length / 3) * 2) {
+        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(group.uvs, 2));
+      }
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+      const mesh = new THREE.Mesh(geometry, this.getMaterial(shape.materials[group.materialIndex]));
+      mesh.name = `${fileName}:${groupIndex}`;
+      root.add(mesh);
+    });
+    return root;
+  }
+
   buildRoute(data) {
     const instancesByShape = new Map();
     data.instances.forEach((instance) => {
+      if (instance.type === 'TrackObj' && /^A\d+t/i.test(instance.shape || '')) {
+        const projection = this.projectPointToPath(instance.position);
+        if (projection
+          && projection.lateralDistance < 4.2
+          && projection.alongDistance <= LOOKOUT_TRAINING_CONFIG.finishDistance + 500) return;
+      }
       if (!instancesByShape.has(instance.shape)) instancesByShape.set(instance.shape, []);
       instancesByShape.get(instance.shape).push(instance);
     });
@@ -359,21 +457,23 @@ export class MstsRouteScene {
     const count = this.routePoints.findIndex((_, index) => this.routeDistances[index] > maxDistance);
     const pointCount = count === -1 ? this.routePoints.length : Math.max(2, count + 1);
     const material = new THREE.MeshPhysicalMaterial({
-      color: '#bfc8cd',
-      metalness: 0.7,
-      roughness: 0.22,
-      clearcoat: 0.82,
-      clearcoatRoughness: 0.1,
-      emissive: '#242b2f',
-      emissiveIntensity: 0.24,
+      color: '#c9d2d7',
+      metalness: 0.96,
+      roughness: 0.13,
+      clearcoat: 1,
+      clearcoatRoughness: 0.06,
+      emissive: '#303a40',
+      emissiveIntensity: 0.34,
       side: THREE.DoubleSide,
     });
     const glintMaterial = new THREE.MeshBasicMaterial({
-      color: '#eef6fa',
+      color: '#ffffff',
       transparent: true,
-      opacity: 0.92,
+      opacity: 0.88,
       side: THREE.DoubleSide,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
     });
     const glintRoot = new THREE.Group();
     glintRoot.name = 'LOOKOUT_RAIL_GLINT';
@@ -414,7 +514,7 @@ export class MstsRouteScene {
 
       const glintPositions = [];
       const glintIndices = [];
-      const glintHalfWidth = 0.017;
+      const glintHalfWidth = 0.024;
       const gapStart = gapConfig ? gapConfig.hazardDistance - 38 : Number.POSITIVE_INFINITY;
       const gapEnd = gapConfig ? gapConfig.hazardDistance + 38 : Number.NEGATIVE_INFINITY;
       for (let index = 0; index < pointCount; index += 1) {
@@ -428,7 +528,7 @@ export class MstsRouteScene {
         const right = new THREE.Vector3(tangent.z, 0, -tangent.x);
         const innerEdge = railOffset - Math.sign(railOffset) * 0.016;
         const center = point.clone().addScaledVector(right, innerEdge);
-        center.y += 0.062;
+        center.y += 0.088;
         const edgeA = center.clone().addScaledVector(right, -glintHalfWidth);
         const edgeB = center.clone().addScaledVector(right, glintHalfWidth);
         glintPositions.push(edgeA.x, edgeA.y, edgeA.z, edgeB.x, edgeB.y, edgeB.z);
@@ -703,7 +803,7 @@ export class MstsRouteScene {
       routeSignals.push({ root, visual, glowSprites: [glow], projection, instance });
     }
     this.routeSignalLights = routeSignals;
-    const throughTarget = ROUTE_CONTEXT.firstBlockEndDistance + 1050;
+    const throughTarget = LOOKOUT_TRAINING_CONFIG.continuityEndDistance + 350;
     this.throughSignal = routeSignals
       .filter((signal) => signal.instance.shape === 'jinzhan-yugao.s')
       .sort((a, b) => Math.abs(a.projection.alongDistance - throughTarget) - Math.abs(b.projection.alongDistance - throughTarget))[0] || null;
@@ -840,10 +940,20 @@ export class MstsRouteScene {
     this.lookoutRoot.add(root);
   }
 
-  buildTunnel(config) {
-    // 区间内 17.87–19.92 km 的隧道口、隧道壁和隧道轨道均来自原游戏世界块。
-    // 教学层只叠加“净空轮廓异常”，不再用方盒重建一条假隧道。
+  buildTunnel(config, sceneData) {
+    // 使用原 NEIYI 的直线隧道段和洞门构件，移植到近程直线段；
+    // 这样保留源游戏外观，同时把课堂等待时间控制在数分钟内。
     const root = new THREE.Group();root.name='LOOKOUT_TUNNEL';this.lookoutRoot.add(root);
+    for (let distance = config.tunnelStartDistance; distance < config.tunnelEndDistance - 20; distance += 100) {
+      const segment = this.createSourceShapeObject(sceneData, 'A1t100mStrtTun.s', `LOOKOUT_SOURCE_TUNNEL_SEGMENT_${distance}`);
+      if (!segment) break;
+      this.placeLookoutObject(segment, distance);
+      root.add(segment);
+    }
+    const entrance = this.createSourceShapeObject(sceneData, 'Cn_tunnel2.s', 'LOOKOUT_SOURCE_TUNNEL_ENTRANCE');
+    if (entrance) { this.placeLookoutObject(entrance, config.tunnelStartDistance); root.add(entrance); }
+    const exit = this.createSourceShapeObject(sceneData, 'Cn_tunnel2.s', 'LOOKOUT_SOURCE_TUNNEL_EXIT');
+    if (exit) { this.placeLookoutObject(exit, config.tunnelEndDistance); exit.rotateY(Math.PI); root.add(exit); }
     const anomaly=new THREE.Group();anomaly.name='LOOKOUT_TUNNEL_CLEARANCE_ANOMALY';
     const warningMaterial=new THREE.MeshStandardMaterial({color:'#928b7b',roughness:.76,metalness:.18,emissive:'#2e281d',emissiveIntensity:.42});
     const upright=new THREE.Mesh(new THREE.BoxGeometry(.68,5.3,.62),warningMaterial);upright.position.set(1.35,2.65,0);
@@ -912,10 +1022,10 @@ export class MstsRouteScene {
     this.lookoutRoot.add(root);this.lookoutVisuals.railGlint=root;
   }
 
-  buildLookoutTrainingScenery() {
+  buildLookoutTrainingScenery(sceneData) {
     this.lookoutRoot=new THREE.Group();this.lookoutRoot.name='LOOKOUT_TRAINING_SCENERY';this.routeRoot.add(this.lookoutRoot);
     const [normal,tunnel,rail,intrusion]=LOOKOUT_TRAINING_CONFIG.events;
-    this.buildCrossing(normal,false);this.buildTunnel(tunnel);this.buildCrossing(intrusion,true);
+    this.buildCrossing(normal,false);this.buildTunnel(tunnel,sceneData);this.buildCrossing(intrusion,true);
   }
 
   updateLookoutTraining(attempt, distance) {

@@ -12,6 +12,11 @@ const resolvePrevious = (state, id) => {
   }
 };
 
+assert(LOOKOUT_TRAINING_CONFIG.continuityEndDistance < eventConfig('normal-crossing').revealDistance);
+assert(eventConfig('normal-crossing').hazardDistance <= 2500, '首个道口必须在正常运行数分钟内出现');
+assert(eventConfig('tunnel-hazard').tunnelStartDistance <= 3000, '隧道入口不得放置在长时间空驶区间');
+assert(LOOKOUT_TRAINING_CONFIG.finishDistance <= 6500, '课堂考核线路不应保留原30 km空驶长度');
+
 {
   const state = makeState();
   const assessment = new LookoutAssessment(state);

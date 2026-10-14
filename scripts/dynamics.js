@@ -1,6 +1,7 @@
 import { LKJ_TRAINING_PARAMETERS, SIGNAL_ASPECTS, TRAIN_DYNAMICS, getLkjMismatchFields, getSmoothStartTerrain } from './scenario.js?rev=start-scoring-v25';
 import { getScenario, ROUTE_CONTEXT } from './credentialScenario.js?rev=lkj-cir-gauge-alignment-v1-20260928';
 import { ROUTE_TRAINING_PROFILE } from './routeTrainingProfile.js';
+import { LOOKOUT_TRAINING_CONFIG } from './lookoutTrainingConfig.js';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const TRACTION_BRAKE_CYL_MAX = 15;
@@ -1183,7 +1184,7 @@ export class TrainSimulation {
       this.emit('列车已到达K231+738的2328通过信号机；第一闭塞分区考评结束，未完成项按0分计。');
     }
     if (s.trainingScope === 'lookout' && !s.continuityStageCompleted && !s.continuityExpired
-      && s.distance >= ROUTE_CONTEXT.firstBlockEndDistance) {
+      && s.distance >= LOOKOUT_TRAINING_CONFIG.continuityEndDistance) {
       s.continuityExpired = true;
       s.continuityStageCompleted = true;
       this.emit('第一闭塞分区已通过，贯通试验未完成项按0分计；考核继续进入途中瞭望。');

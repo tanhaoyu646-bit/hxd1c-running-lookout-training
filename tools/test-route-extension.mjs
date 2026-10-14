@@ -4,6 +4,8 @@ import { buildRailAlignedPath, cumulativePathDistances } from '../scripts/railAl
 
 const scene = JSON.parse(await readFile('assets/msts-neiyi-corridor/neiyi-neijiang-neijiangnan-scene.json', 'utf8'));
 const path = JSON.parse(await readFile('assets/msts-neiyi/neiyi-5635-trackdb-path.json', 'utf8'));
+const terrain = JSON.parse(await readFile('assets/msts-neiyi-corridor/neiyi-lookout-terrain.json', 'utf8'));
+const routeSceneSource = await readFile('scripts/mstsRouteScene.js', 'utf8');
 const points = Array.from(
   { length: Math.floor(path.positions.length / 3) },
   (_, index) => path.positions.slice(index * 3, index * 3 + 3),
@@ -17,6 +19,12 @@ for (let index = 1; index < points.length; index += 1) {
 }
 
 assert.ok(cumulative.at(-1) > 10_000, 'route must extend beyond the complete first block');
+assert.equal(terrain.summary.tileCount, 8, '近程考核走廊必须加载8个原线路地形瓦片');
+assert.equal(terrain.summary.resolution, 65);
+assert(terrain.tiles.every((tile) => tile.heights.length === 65 * 65));
+assert(terrain.tiles.some((tile) => Math.max(...tile.heights) - Math.min(...tile.heights) > 50), '地形高程不能退化为平面');
+assert.match(routeSceneSource, /MSTS_SOURCE_TERRAIN/);
+assert.match(routeSceneSource, /A1t100mStrtTun\.s/);
 
 const alignedPoints = buildRailAlignedPath(path.positions, scene.instances, { spacing: 5 });
 const alignedDistances = cumulativePathDistances(alignedPoints);

@@ -1,6 +1,6 @@
 import { TrainSimulation } from './dynamics.js?rev=notch-timing-v30';
 import { getProcedure, procedureState, scoreRun } from './procedure.js?rev=notch-timing-v30';
-import { MstsRouteScene } from './mstsRouteScene.js?rev=smooth-start-v19-cir-incoming-clickfix';
+import { MstsRouteScene } from './mstsRouteScene.js?rev=lookout-terrain-v2';
 import { LKJ_FIELD_DEFINITIONS, LKJ_TRAINING_PARAMETERS, RUNNING_NOTICES, SIGNAL_ASPECTS, TRAIN_DYNAMICS, SMOOTH_START_TERRAINS, getSmoothStartTerrain } from './scenario.js?rev=notch-timing-v30';
 import { SCENARIOS, ROUTE_CONTEXT, getScenario, scenarioAudioPath } from './credentialScenario.js?rev=smooth-start-v19-cir-incoming-clickfix';
 import { ROUTE_TRAINING_PROFILE } from './routeTrainingProfile.js';
@@ -11,6 +11,9 @@ const $ = (q) => document.querySelector(q);
 const sim = new TrainSimulation();
 const TRAINING_APP = ['smooth','continuity','lookout'].includes(document.body.dataset.trainingApp) ? document.body.dataset.trainingApp : 'departure';
 const IS_CONTINUITY_APP = TRAINING_APP === 'continuity' || TRAINING_APP === 'lookout';
+const activeFirstBlockEndDistance = (state) => state.trainingScope === 'lookout'
+  ? LOOKOUT_TRAINING_CONFIG.continuityEndDistance
+  : ROUTE_CONTEXT.firstBlockEndDistance;
 const isContinuityPhase = (state) => state.trainingScope === 'continuity'
   || (state.trainingScope === 'lookout' && !state.continuityStageCompleted);
 if (TRAINING_APP === 'smooth') sim.state.trainingScope = 'smooth-only';
@@ -376,7 +379,7 @@ function lkjCabAspect(state=sim.state,scenario=getScenario(state.scenarioId)){
   return state.signalAspect==='greenYellow'?'green-yellow':state.signalAspect;
 }
 function lkjNativeTop(state=sim.state){
-  const scenario=getScenario(state.scenarioId);const unset=!state.lkjAttempted&&!state.lkjConfirmed;const limit=unset?0:lkjActiveLimit(state,scenario);const targetDistance=state.trainingScope==='continuity'&&state.signalPassed?ROUTE_CONTEXT.firstBlockEndDistance:ROUTE_CONTEXT.departureSignalDistance;const remaining=unset?0:Math.max(0,Math.round(targetDistance-state.distance));
+  const scenario=getScenario(state.scenarioId);const unset=!state.lkjAttempted&&!state.lkjConfirmed;const limit=unset?0:lkjActiveLimit(state,scenario);const targetDistance=(state.trainingScope==='continuity'||state.trainingScope==='lookout')&&state.signalPassed?activeFirstBlockEndDistance(state):ROUTE_CONTEXT.departureSignalDistance;const remaining=unset?0:Math.max(0,Math.round(targetDistance-state.distance));
   return `<div class="lkj-native-aspect ${lkjCabAspect(state,scenario)}" aria-label="机车信号"></div><b class="lkj-native-speed">${Math.round(state.speed)}</b><b class="lkj-native-limit">${limit}</b><b class="lkj-native-distance">${remaining}</b><b class="lkj-native-station">${unset?'':`${state.signalPassed?'通过':'出站'}　${state.signalPassed?'6133':'6119'}`}</b><b class="lkj-native-km">${unset?'0.000':(611.864+state.distance/1000).toFixed(3)}</b><time class="lkj-native-time">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</time>`;
 }
 function lkjFrame(body='',frame='main-blank.png'){
@@ -875,7 +878,7 @@ function render(state,message='') {
   if(procedureRoot&&procedureRoot.dataset.signature!==procedureSignature){procedureRoot.dataset.signature=procedureSignature;procedureRoot.innerHTML=procedure.map(([n],i)=>`<li class="${p.complete[i]?'done':i===p.current?'active':''}">${n}</li>`).join('');}
   const score=scoreRun(state);const aspect=SIGNAL_ASPECTS[state.signalAspect];const scenario=getScenario(state.scenarioId);
   const context=state.trainingScope==='continuity'?'默认平道 · 第一闭塞分区':state.trainingScope==='smooth-only'?(state.terrainSelected?getSmoothStartTerrain(state.terrainMode).label:'未选择线路条件'):(state.scenarioSelected?scenario.label:'未选择场景');
-  const blockRemaining=Math.max(0,Math.round(ROUTE_CONTEXT.firstBlockEndDistance-state.distance));
+  const blockRemaining=Math.max(0,Math.round(activeFirstBlockEndDistance(state)-state.distance));
   if(state.trainingScope==='lookout'){
     const active=lookoutAssessment?.current(state)?.config;
     const nextEvent=active||LOOKOUT_TRAINING_CONFIG.events.find((config)=>state.lookout?.events?.[config.id]?.status==='pending');
@@ -894,7 +897,7 @@ function renderSmoothStartPanel(state){
   const startedCars=Math.min(state.consistCars||12,Math.round((state.wholeTrainStartFraction||0)*(state.consistCars||12)));
   const setText=(id,value)=>{const element=$(id);if(element)element.textContent=value;};
   if(isContinuityPhase(state)){
-    const remaining=Math.max(0,Math.round(ROUTE_CONTEXT.firstBlockEndDistance-state.distance));
+    const remaining=Math.max(0,Math.round(activeFirstBlockEndDistance(state)-state.distance));
     const phase=state.continuityTractionRestoredCorrectly?'完成':state.continuityReleaseAttempted?'恢复牵引':state.continuityLkjObserved?'缓解自阀':state.continuitySpeedDeclining?'退级并查看LKJ':state.continuityBrakeAttempted?'排风减速':state.continuityTailPressureCorrect?'等待60 km/h':'平稳起车';
     setText('#metric-speed',`${state.speed.toFixed(1)} km/h`);
     setText('#metric-traction',state.traction>0?`${state.traction.toFixed(1)}级`:'零位');
