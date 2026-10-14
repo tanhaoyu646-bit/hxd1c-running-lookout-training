@@ -5,7 +5,7 @@ import { LOOKOUT_TRAINING_CONFIG } from './lookoutTrainingConfig.js';
 
 // fetch() 的相对地址以页面而非当前模块为基准；GitHub Pages 位于仓库子目录，
 // 因此所有三维资源必须相对 import.meta.url 解析，不能使用普通 ../assets 字符串。
-const SOURCE_PATH = new URL('../assets/msts-neiyi-corridor/neiyi-neijiang-neijiangnan-scene.json', import.meta.url).href;
+const SOURCE_PATH = new URL('../assets/msts-neiyi-corridor/neiyi-lookout-full-scene.json', import.meta.url).href;
 const ROUTE_PATH = new URL('../assets/msts-neiyi/neiyi-5635-trackdb-path.json', import.meta.url).href;
 const TEXTURE_PATH = new URL('../assets/msts-neiyi-corridor/textures/', import.meta.url).href;
 // GitHub Pages 区分大小写；原游戏导出中的三处引用大小写与发布文件名不同。
@@ -16,11 +16,11 @@ const TEXTURE_FILE_ALIASES = Object.freeze({
   'acleantrack2.png': 'ACleanTrack2.png',
   'sign.png': 'Sign.png',
 });
-const NEXT_STATION_DISTANCE = ROUTE_CONTEXT.departureSignalDistance;
-// 真实路线模型优先。程序化轨道仅保留作回退实验，默认不得覆盖游戏来源的轨道与站台。
+// 原游戏世界块提供场景、道岔、信号机和隧道；同一条 TrackDB 中心线
+// 同时生成连续的训练线路表面，避免 MSTS 分节模型在 WebGL 中出现接缝。
 const ROUTE_RENDER_OPTIONS = Object.freeze({
-  proceduralTrack: false,
-  railHighlights: false,
+  proceduralTrack: true,
+  railHighlights: true,
   sourceDepartureSignal: true,
 });
 
@@ -106,10 +106,12 @@ export class MstsRouteScene {
       this.buildRoutePath(pathData, sceneData);
       this.buildRoute(sceneData);
       this.buildPassengerConsist(12);
-      if (ROUTE_RENDER_OPTIONS.proceduralTrack) this.buildSelectedRouteTrack(NEXT_STATION_DISTANCE + 350);
-      if (ROUTE_RENDER_OPTIONS.railHighlights) this.buildRailHighlights(NEXT_STATION_DISTANCE + 350);
+      const renderedRouteDistance = Math.min(this.pathLength, LOOKOUT_TRAINING_CONFIG.finishDistance + 350);
+      const railEvent = LOOKOUT_TRAINING_CONFIG.events.find((item) => item.visualKind === 'rail');
+      if (ROUTE_RENDER_OPTIONS.proceduralTrack) this.buildSelectedRouteTrack(renderedRouteDistance);
+      if (ROUTE_RENDER_OPTIONS.railHighlights) this.buildRailHighlights(renderedRouteDistance, railEvent);
       if (ROUTE_RENDER_OPTIONS.sourceDepartureSignal) this.buildSourceDepartureSignal(sceneData);
-      this.buildTeachingThroughSignal();
+      this.buildSourceRouteSignalLights(sceneData);
       this.buildLookoutTrainingScenery();
       this.ready = true;
       this.applyCamera();
@@ -131,6 +133,9 @@ export class MstsRouteScene {
     let texture = null;
     if (textureName) {
       texture = this.textureLoader.load(`${TEXTURE_PATH}${encodeURIComponent(fileName)}`);
+      // MSTS 的 UV 原点和 Three.js 图像上传默认相反。保留导出 UV 时必须禁用二次翻转，
+      // 否则树木与楼房纹理会整体倒置。
+      texture.flipY = false;
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
       texture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
@@ -151,13 +156,7 @@ export class MstsRouteScene {
 
   buildRoute(data) {
     const instancesByShape = new Map();
-    const dedicatedSignalUids = new Set([
-      ROUTE_CONTEXT.departureSignalSourceUid,
-      ROUTE_CONTEXT.neighborSignalSourceUid,
-    ]);
     data.instances.forEach((instance) => {
-      // 这两架信号机由独立的、带原始 Sign 贴图和可控灯态的模型渲染，避免重复叠加。
-      if (instance.type === 'SignalObj' && dedicatedSignalUids.has(instance.uid)) return;
       if (!instancesByShape.has(instance.shape)) instancesByShape.set(instance.shape, []);
       instancesByShape.get(instance.shape).push(instance);
     });
@@ -356,7 +355,7 @@ export class MstsRouteScene {
     return best;
   }
 
-  buildRailHighlights(maxDistance) {
+  buildRailHighlights(maxDistance, gapConfig = null) {
     const count = this.routePoints.findIndex((_, index) => this.routeDistances[index] > maxDistance);
     const pointCount = count === -1 ? this.routePoints.length : Math.max(2, count + 1);
     const material = new THREE.MeshPhysicalMaterial({
@@ -372,10 +371,12 @@ export class MstsRouteScene {
     const glintMaterial = new THREE.MeshBasicMaterial({
       color: '#eef6fa',
       transparent: true,
-      opacity: 0.58,
+      opacity: 0.92,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
+    const glintRoot = new THREE.Group();
+    glintRoot.name = 'LOOKOUT_RAIL_GLINT';
     const gaugeHalf = 0.7175;
     const railHalfWidth = 0.036;
     for (const railOffset of [-gaugeHalf, gaugeHalf]) {
@@ -392,7 +393,7 @@ export class MstsRouteScene {
         tangent.normalize();
         const right = new THREE.Vector3(tangent.z, 0, -tangent.x);
         const center = point.clone().addScaledVector(right, railOffset);
-        center.y += 0.008;
+        center.y += 0.045;
         const edgeA = center.clone().addScaledVector(right, -railHalfWidth);
         const edgeB = center.clone().addScaledVector(right, railHalfWidth);
         positions.push(edgeA.x, edgeA.y, edgeA.z, edgeB.x, edgeB.y, edgeB.z);
@@ -413,7 +414,9 @@ export class MstsRouteScene {
 
       const glintPositions = [];
       const glintIndices = [];
-      const glintHalfWidth = 0.006;
+      const glintHalfWidth = 0.017;
+      const gapStart = gapConfig ? gapConfig.hazardDistance - 38 : Number.POSITIVE_INFINITY;
+      const gapEnd = gapConfig ? gapConfig.hazardDistance + 38 : Number.NEGATIVE_INFINITY;
       for (let index = 0; index < pointCount; index += 1) {
         const point = this.routePoints[index];
         const previous = this.routePoints[Math.max(0, index - 1)];
@@ -425,13 +428,17 @@ export class MstsRouteScene {
         const right = new THREE.Vector3(tangent.z, 0, -tangent.x);
         const innerEdge = railOffset - Math.sign(railOffset) * 0.016;
         const center = point.clone().addScaledVector(right, innerEdge);
-        center.y += 0.011;
+        center.y += 0.062;
         const edgeA = center.clone().addScaledVector(right, -glintHalfWidth);
         const edgeB = center.clone().addScaledVector(right, glintHalfWidth);
         glintPositions.push(edgeA.x, edgeA.y, edgeA.z, edgeB.x, edgeB.y, edgeB.z);
         if (index < pointCount - 1) {
           const base = index * 2;
-          glintIndices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+          const segmentStart = this.routeDistances[index];
+          const segmentEnd = this.routeDistances[index + 1];
+          if (segmentEnd < gapStart || segmentStart > gapEnd) {
+            glintIndices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+          }
         }
       }
       const glintGeometry = new THREE.BufferGeometry();
@@ -441,16 +448,20 @@ export class MstsRouteScene {
       const glint = new THREE.Mesh(glintGeometry, glintMaterial);
       glint.name = railOffset < 0 ? 'SELECTED_ROUTE_GLINT_LEFT' : 'SELECTED_ROUTE_GLINT_RIGHT';
       glint.renderOrder = 3;
-      this.routeRoot.add(glint);
+      glint.frustumCulled = false;
+      glintRoot.add(glint);
     }
+    this.routeRoot.add(glintRoot);
+    this.lookoutVisuals.railGlint = glintRoot;
   }
 
   buildSelectedRouteTrack(maxDistance) {
     const count = this.routePoints.findIndex((_, index) => this.routeDistances[index] > maxDistance);
     const pointCount = count === -1 ? this.routePoints.length : Math.max(2, count + 1);
-    const ribbon = (halfWidth, yOffset, material, name) => {
+    const ribbon = (halfWidth, yOffset, material, name, textured = false) => {
       const positions = [];
       const normals = [];
+      const uvs = [];
       const indices = [];
       for (let index = 0; index < pointCount; index += 1) {
         const point = this.routePoints[index];
@@ -467,6 +478,10 @@ export class MstsRouteScene {
         const rightEdge = center.clone().addScaledVector(right, halfWidth);
         positions.push(left.x, left.y, left.z, rightEdge.x, rightEdge.y, rightEdge.z);
         normals.push(0, 1, 0, 0, 1, 0);
+        if (textured) {
+          const repeat = this.routeDistances[index] / 6.56;
+          uvs.push(0, repeat, 1, repeat);
+        }
         if (index < pointCount - 1) {
           const base = index * 2;
           indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
@@ -475,49 +490,29 @@ export class MstsRouteScene {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+      if (textured) geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
       geometry.setIndex(indices);
       geometry.computeBoundingSphere();
       const mesh = new THREE.Mesh(geometry, material);
       mesh.name = name;
+      mesh.frustumCulled = false;
       this.routeRoot.add(mesh);
     };
 
-    ribbon(1.55, -0.15, new THREE.MeshStandardMaterial({
-      color: '#706b62', roughness: 0.98, metalness: 0.01, side: THREE.DoubleSide,
-    }), 'SELECTED_ROUTE_BALLAST');
-
-    const sleeperSpacing = 0.82;
-    const sleeperCount = Math.floor(Math.min(maxDistance, this.pathLength) / sleeperSpacing) + 1;
-    const sleeperGeometry = new THREE.BoxGeometry(2.45, 0.1, 0.2);
-    const sleeperMaterial = new THREE.MeshStandardMaterial({
-      color: '#625b50', roughness: 0.92, metalness: 0.02,
-    });
-    const sleepers = new THREE.InstancedMesh(sleeperGeometry, sleeperMaterial, sleeperCount);
-    sleepers.name = 'SELECTED_ROUTE_SLEEPERS';
-    sleepers.frustumCulled = false;
-    const object = new THREE.Object3D();
-    const point = new THREE.Vector3();
-    const before = new THREE.Vector3();
-    const after = new THREE.Vector3();
-    const tangent = new THREE.Vector3();
-    for (let index = 0; index < sleeperCount; index += 1) {
-      const distance = index * sleeperSpacing;
-      this.getPathPosition(distance, point);
-      this.getPathPosition(Math.max(0, distance - 1), before);
-      this.getPathPosition(Math.min(this.pathLength, distance + 1), after);
-      tangent.subVectors(after, before);
-      tangent.y = 0;
-      if (tangent.lengthSq() < 0.000001) tangent.copy(this.forward);
-      tangent.normalize();
-      object.position.copy(point);
-      object.position.y -= 0.085;
-      object.rotation.set(0, Math.atan2(tangent.x, tangent.z), 0);
-      object.scale.set(1, 1, 1);
-      object.updateMatrix();
-      sleepers.setMatrixAt(index, object.matrix);
-    }
-    sleepers.instanceMatrix.needsUpdate = true;
-    this.routeRoot.add(sleepers);
+    ribbon(2.52, -0.045, new THREE.MeshStandardMaterial({
+      color: '#625f57', roughness: 1, metalness: 0, side: THREE.DoubleSide,
+    }), 'SELECTED_ROUTE_BALLAST_SHOULDER');
+    const trackMaterial = this.getMaterial({
+      name: 'MSTS_SELECTED_ROUTE_TRACK',
+      texture: 'ACleanTrack1.png',
+      alphaTestMode: 0,
+    }).clone();
+    trackMaterial.roughness = 0.72;
+    trackMaterial.metalness = 0.12;
+    trackMaterial.polygonOffset = true;
+    trackMaterial.polygonOffsetFactor = -2;
+    trackMaterial.polygonOffsetUnits = -2;
+    ribbon(2.24, 0.008, trackMaterial, 'SELECTED_ROUTE_TEXTURED_TRACK', true);
   }
 
   buildSourceDepartureSignal(data) {
@@ -571,7 +566,7 @@ export class MstsRouteScene {
     return this.signalGlowTexture;
   }
 
-  createSourceSignal(selected, signalAsset, name, isDepartureSignal) {
+  createSourceSignal(selected, signalAsset, name, isDepartureSignal, includeBody = false) {
     const root = new THREE.Group();
     root.name = name;
     root.position.fromArray(selected.instance.position);
@@ -587,21 +582,23 @@ export class MstsRouteScene {
     root.add(visual);
     const body = new THREE.Group();
     body.name = `${name}_BODY`;
-    signalAsset.groups.forEach((group, groupIndex) => {
-      if (!group.positions?.length) return;
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(group.positions, 3));
-      if (group.uvs?.length === (group.positions.length / 3) * 2) {
-        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(group.uvs, 2));
-      }
-      geometry.computeVertexNormals();
-      geometry.computeBoundingSphere();
-      const mesh = new THREE.Mesh(geometry, this.getMaterial(signalAsset.materials[group.materialIndex]));
-      mesh.name = `${name}_BODY_${groupIndex}`;
-      mesh.userData.sourceShape = signalAsset.source.fileName;
-      mesh.userData.sourceSha256 = signalAsset.source.sha256;
-      body.add(mesh);
-    });
+    if (includeBody) {
+      signalAsset.groups.forEach((group, groupIndex) => {
+        if (!group.positions?.length) return;
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(group.positions, 3));
+        if (group.uvs?.length === (group.positions.length / 3) * 2) {
+          geometry.setAttribute('uv', new THREE.Float32BufferAttribute(group.uvs, 2));
+        }
+        geometry.computeVertexNormals();
+        geometry.computeBoundingSphere();
+        const mesh = new THREE.Mesh(geometry, this.getMaterial(signalAsset.materials[group.materialIndex]));
+        mesh.name = `${name}_BODY_${groupIndex}`;
+        mesh.userData.sourceShape = signalAsset.source.fileName;
+        mesh.userData.sourceSha256 = signalAsset.source.sha256;
+        body.add(mesh);
+      });
+    }
     visual.add(body);
 
     const lampGeometry = new THREE.SphereGeometry(0.095, 14, 10);
@@ -648,6 +645,68 @@ export class MstsRouteScene {
     this.applySignalAspect(this.departureSignal, this.signalAspect);
     // 邻线信号机固定显示红灯，明确其不属于本列车运行进路。
     this.applySignalAspect(this.neighborSignal, 'red');
+  }
+
+  buildSourceRouteSignalLights(data) {
+    // 灯位来自 NEIYI/sigcfg.dat；杆体、信号机头和姿态仍使用原游戏 SignalObj。
+    const definitions = Object.freeze({
+      'jinzhan-yugao.s': { green: [0, 5.543, 0], yellow: [0, 5.343, 0], radius: 0.14 },
+      'jinzhan.s': { green: [0, 5.343, 0.015], red: [0, 4.314, 0], radius: 0.14 },
+      'chuzhan-halfauto.s': { green: [0.01, 0.944, 0], red: [0.01, 0.742, 0], radius: 0.09 },
+      'jinzhan-fushi.s': { green: [0.01, 0.762, 0], radius: 0.09 },
+      'chuzhan-fushi.s': { green: [0.01, 0.762, 0], radius: 0.09 },
+    });
+    const colors = { green: '#28e878', yellow: '#f6c744', red: '#e54a46' };
+    const routeSignals = [];
+    for (const instance of data.instances) {
+      const definition = definitions[instance.shape];
+      if (instance.type !== 'SignalObj' || !definition) continue;
+      const projection = this.projectPointToPath(instance.position);
+      if (!projection || projection.alongDistance > LOOKOUT_TRAINING_CONFIG.finishDistance + 500) continue;
+      if (projection.lateralDistance > 8.5) continue;
+      const overlapsDeparture = [this.departureSignal, this.neighborSignal].some((signal) => (
+        signal && Math.abs(signal.projection.alongDistance - projection.alongDistance) < 1.5
+      ));
+      if (overlapsDeparture) continue;
+
+      const aspect = Math.abs(projection.signedLateral) <= 4.8 || !definition.red ? 'green' : 'red';
+      const localPosition = definition[aspect] || definition.green;
+      const root = new THREE.Group();
+      root.name = `SOURCE_ROUTE_SIGNAL_LIGHT_${String(routeSignals.length + 1).padStart(2, '0')}`;
+      root.position.fromArray(instance.position);
+      root.quaternion.fromArray(instance.quaternion).normalize();
+      root.userData.sourceUid = instance.uid;
+      root.userData.sourceShape = instance.shape;
+      root.userData.alongDistance = projection.alongDistance;
+      const visual = new THREE.Group();
+      root.add(visual);
+      const lamp = new THREE.Mesh(
+        new THREE.SphereGeometry(definition.radius, 14, 10),
+        new THREE.MeshBasicMaterial({ color: colors[aspect], toneMapped: false }),
+      );
+      lamp.position.fromArray(localPosition);
+      visual.add(lamp);
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: this.createSignalGlowTexture(),
+        color: colors[aspect],
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        toneMapped: false,
+      }));
+      glow.position.copy(lamp.position);
+      glow.userData.basePosition = lamp.position.clone();
+      glow.scale.setScalar(definition.radius * 4.5);
+      glow.renderOrder = 8;
+      visual.add(glow);
+      this.routeRoot.add(root);
+      routeSignals.push({ root, visual, glowSprites: [glow], projection, instance });
+    }
+    this.routeSignalLights = routeSignals;
+    const throughTarget = ROUTE_CONTEXT.firstBlockEndDistance + 1050;
+    this.throughSignal = routeSignals
+      .filter((signal) => signal.instance.shape === 'jinzhan-yugao.s')
+      .sort((a, b) => Math.abs(a.projection.alongDistance - throughTarget) - Math.abs(b.projection.alongDistance - throughTarget))[0] || null;
   }
 
   buildTeachingThroughSignal() {
@@ -753,7 +812,7 @@ export class MstsRouteScene {
     const paintMaterial = new THREE.MeshBasicMaterial({ color: '#eee6ba' });
     const postMaterial = new THREE.MeshStandardMaterial({ color: '#e6e8e7', roughness: .72 });
     const stripeMaterial = new THREE.MeshStandardMaterial({ color: '#d83c37', roughness: .7 });
-    const road = new THREE.Mesh(new THREE.BoxGeometry(17, .12, 7), roadMaterial);
+    const road = new THREE.Mesh(new THREE.BoxGeometry(22, .12, 7), roadMaterial);
     road.position.y = .02;root.add(road);
     for (const x of [-6,-3,0,3,6]) {
       const marking = new THREE.Mesh(new THREE.BoxGeometry(1.5,.03,.16),paintMaterial);
@@ -768,9 +827,11 @@ export class MstsRouteScene {
     }
     if (intrusion) {
       const hazard = new THREE.Group();hazard.name='LOOKOUT_INTRUSION_ACTORS';
-      const vehicle = new THREE.Mesh(new THREE.BoxGeometry(3.8,1.55,1.75),new THREE.MeshStandardMaterial({color:'#d48b32',roughness:.52,metalness:.18}));
-      vehicle.position.set(-.8,1.0,.2);hazard.add(vehicle);
-      for(const x of [-2.15,.55])for(const z of [-.62,.62]){const wheel=new THREE.Mesh(new THREE.CylinderGeometry(.34,.34,.18,14),new THREE.MeshStandardMaterial({color:'#171a1c',roughness:.9}));wheel.rotation.z=Math.PI/2;wheel.position.set(x,.38,z);hazard.add(wheel);}
+      const vehicle = new THREE.Mesh(new THREE.BoxGeometry(5.1,1.9,2.05),new THREE.MeshStandardMaterial({color:'#f09a28',roughness:.42,metalness:.16,emissive:'#4b2404',emissiveIntensity:.22}));
+      vehicle.position.set(-.65,1.16,.15);hazard.add(vehicle);
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(1.7,1.05,2.0),new THREE.MeshStandardMaterial({color:'#ffd05b',roughness:.46,metalness:.12}));
+      cab.position.set(1.05,2.18,.15);hazard.add(cab);
+      for(const x of [-2.1,1.05])for(const z of [-.76,.76]){const wheel=new THREE.Mesh(new THREE.CylinderGeometry(.42,.42,.22,14),new THREE.MeshStandardMaterial({color:'#171a1c',roughness:.9}));wheel.rotation.z=Math.PI/2;wheel.position.set(x,.43,z);hazard.add(wheel);}
       const person = new THREE.Group();
       const body = new THREE.Mesh(new THREE.CapsuleGeometry(.26,.85,5,10),new THREE.MeshStandardMaterial({color:'#d9363e',roughness:.75}));body.position.y=1.05;person.add(body);
       const head = new THREE.Mesh(new THREE.SphereGeometry(.22,12,10),new THREE.MeshStandardMaterial({color:'#d5a27f',roughness:.8}));head.position.y=1.78;person.add(head);person.position.set(1.8,0,-.5);hazard.add(person);
@@ -780,27 +841,20 @@ export class MstsRouteScene {
   }
 
   buildTunnel(config) {
+    // 区间内 17.87–19.92 km 的隧道口、隧道壁和隧道轨道均来自原游戏世界块。
+    // 教学层只叠加“净空轮廓异常”，不再用方盒重建一条假隧道。
     const root = new THREE.Group();root.name='LOOKOUT_TUNNEL';this.lookoutRoot.add(root);
-    const wallMaterial = new THREE.MeshStandardMaterial({color:'#464b4b',roughness:.97,side:THREE.DoubleSide});
-    const portalMaterial = new THREE.MeshStandardMaterial({color:'#5a5e5b',roughness:.9});
-    for(let distance=config.tunnelStartDistance;distance<=config.tunnelEndDistance;distance+=32){
-      const segment=new THREE.Group();
-      const left=new THREE.Mesh(new THREE.BoxGeometry(.65,6.3,33),wallMaterial);left.position.set(-4.25,3.1,0);
-      const right=left.clone();right.position.x=4.25;
-      const roof=new THREE.Mesh(new THREE.BoxGeometry(9.1,.55,33),wallMaterial);roof.position.y=6.25;
-      segment.add(left,right,roof);this.placeLookoutObject(segment,distance);root.add(segment);
-    }
-    for(const distance of [config.tunnelStartDistance,config.tunnelEndDistance]){
-      const portal=new THREE.Group();
-      const top=new THREE.Mesh(new THREE.BoxGeometry(10,.65,.9),portalMaterial);top.position.y=6.45;portal.add(top);
-      for(const x of [-4.65,4.65]){const side=new THREE.Mesh(new THREE.BoxGeometry(.7,6.8,.9),portalMaterial);side.position.set(x,3.1,0);portal.add(side);}
-      this.placeLookoutObject(portal,distance);root.add(portal);
-    }
     const anomaly=new THREE.Group();anomaly.name='LOOKOUT_TUNNEL_CLEARANCE_ANOMALY';
-    const warningMaterial=new THREE.MeshBasicMaterial({color:'#ff542f',toneMapped:false});
-    const upright=new THREE.Mesh(new THREE.BoxGeometry(.42,4.9,.42),warningMaterial);upright.position.set(1.65,2.45,0);
-    const arm=new THREE.Mesh(new THREE.BoxGeometry(3.5,.42,.42),warningMaterial);arm.position.set(.05,4.7,0);arm.rotation.z=-.12;
-    anomaly.add(upright,arm);this.placeLookoutObject(anomaly,config.hazardDistance);root.add(anomaly);
+    const warningMaterial=new THREE.MeshStandardMaterial({color:'#928b7b',roughness:.76,metalness:.18,emissive:'#2e281d',emissiveIntensity:.42});
+    const upright=new THREE.Mesh(new THREE.BoxGeometry(.68,5.3,.62),warningMaterial);upright.position.set(1.35,2.65,0);
+    const arm=new THREE.Mesh(new THREE.BoxGeometry(3.9,.62,.62),warningMaterial);arm.position.set(-.18,4.75,0);arm.rotation.z=-.16;
+    anomaly.add(upright,arm);
+    const reflectorMaterial=new THREE.MeshBasicMaterial({color:'#ffd85a',toneMapped:false});
+    for(const y of [1.2,2.35,3.5]){
+      const reflector=new THREE.Mesh(new THREE.BoxGeometry(.76,.16,.04),reflectorMaterial);
+      reflector.position.set(1.35,y,-.33);anomaly.add(reflector);
+    }
+    this.placeLookoutObject(anomaly,config.hazardDistance);root.add(anomaly);
     this.lookoutVisuals.tunnelAnomaly=anomaly;
   }
 
@@ -861,8 +915,7 @@ export class MstsRouteScene {
   buildLookoutTrainingScenery() {
     this.lookoutRoot=new THREE.Group();this.lookoutRoot.name='LOOKOUT_TRAINING_SCENERY';this.routeRoot.add(this.lookoutRoot);
     const [normal,tunnel,rail,intrusion]=LOOKOUT_TRAINING_CONFIG.events;
-    this.buildLookoutContinuationTrack(9800,LOOKOUT_TRAINING_CONFIG.finishDistance+300);
-    this.buildCrossing(normal,false);this.buildTunnel(tunnel);this.buildRailGlint(rail);this.buildCrossing(intrusion,true);
+    this.buildCrossing(normal,false);this.buildTunnel(tunnel);this.buildCrossing(intrusion,true);
   }
 
   updateLookoutTraining(attempt, distance) {

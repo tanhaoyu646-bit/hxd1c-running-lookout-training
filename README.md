@@ -29,3 +29,5 @@ npm run check
 ```
 
 访问 `http://127.0.0.1:4175/lookout-training/`。三维资源通过 `fetch` 加载，不能直接双击 HTML 文件运行。
+
+原线路数据边界、完整区间导出及关键里程验收点见 [CORRIDOR_SOURCE_AUDIT.md](CORRIDOR_SOURCE_AUDIT.md)。

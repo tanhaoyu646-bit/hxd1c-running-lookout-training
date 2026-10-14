@@ -63,7 +63,11 @@ export function buildRailAlignedPath(flatPositions, instances, options = {}) {
     { length: flatPositions.length / 3 },
     (_, index) => flatPositions.slice(index * 3, index * 3 + 3),
   );
-  const trackInstances = (instances || []).filter((instance) => instance.type === 'TrackObj');
+  // MSTS 把铁路与道路都导出为 TrackObj。如果把 JP2Rd 道路的方向当成钢轨切线，
+  // Hermite 中心线会在平交口被拉离钢轨。只允许 A1t/A2t/A3t 系列的原始铁路构件参与对齐。
+  const trackInstances = (instances || []).filter((instance) => (
+    instance.type === 'TrackObj' && /^A\d+t/i.test(instance.shape || '')
+  ));
   const tangents = controls.map((point, index) => {
     const desired = desiredTangent(controls, index);
     return findTrackTangent(point, desired, trackInstances, maximumTangentDistance);

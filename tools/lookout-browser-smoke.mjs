@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
+import { LOOKOUT_TRAINING_CONFIG } from '../scripts/lookoutTrainingConfig.js';
 
 const port = Number(process.env.CDP_PORT || 9227);
 const url = process.env.TRAINING_URL || 'http://127.0.0.1:4177/lookout-training/?debug=1';
@@ -68,7 +69,7 @@ assert.equal(summary.procedureItems,6);
 assert.equal(summary.routeLive,true);
 assert.equal(summary.trainingScope,'lookout');
 assert.equal(summary.trainingMode,'assessment');
-assert(summary.pathLength>30700,'线路长度不足以覆盖结算点');
+assert(summary.pathLength>LOOKOUT_TRAINING_CONFIG.finishDistance,'线路长度不足以覆盖结算点');
 for(const name of ['LOOKOUT_NORMAL_CROSSING','LOOKOUT_TUNNEL','LOOKOUT_TUNNEL_CLEARANCE_ANOMALY','LOOKOUT_RAIL_GLINT','LOOKOUT_INTRUSION_CROSSING','LOOKOUT_INTRUSION_ACTORS'])assert(summary.sceneNames.includes(name),`缺少三维对象 ${name}`);
 assert.match(summary.controlsText,/平稳发车4分、贯通试验16分/);
 assert.equal(summary.overflowX,false);
@@ -78,7 +79,13 @@ assert.deepEqual(networkErrors,[]);
 const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
 await writeFile(screenshotPath,Buffer.from(shot.data,'base64'));
 const sceneShots = {};
-for (const [label, distance] of (mobile ? [] : [['tunnel',17120],['rail',23080],['intrusion',30080]])) {
+const events = Object.fromEntries(LOOKOUT_TRAINING_CONFIG.events.map((event) => [event.id, event]));
+for (const [label, distance] of (mobile ? [] : [
+  ['normal-crossing', events['normal-crossing'].hazardDistance - 120],
+  ['tunnel', events['tunnel-hazard'].hazardDistance - 140],
+  ['rail', events['rail-glint-break'].hazardDistance - 120],
+  ['intrusion', events['intrusion-crossing'].hazardDistance - 120],
+])) {
   await evaluate(`(()=>{const state=window.__trainingSim.state;state.distance=${distance};state.speed=60;window.__routeScene.update(state.distance,state.speed,'front',true,1);window.__routeScene.updateLookoutTraining(state.lookout,state.distance);return true;})()`);
   await new Promise((resolve)=>setTimeout(resolve,180));
   const sceneShot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
