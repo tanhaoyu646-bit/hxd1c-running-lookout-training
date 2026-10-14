@@ -4,3 +4,4 @@ Thumbs.db
 node_modules/
 dist/
 tools/msts-tooling-root/
+reports/

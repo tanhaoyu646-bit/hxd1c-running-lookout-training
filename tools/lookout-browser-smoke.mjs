@@ -9,7 +9,8 @@ const mobile = process.env.MOBILE === '1';
 const viewportWidth = Number(process.env.VIEWPORT_WIDTH || (mobile ? 1056 : 1440));
 const viewportHeight = Number(process.env.VIEWPORT_HEIGHT || (mobile ? 480 : 900));
 const pages = await fetch(`http://127.0.0.1:${port}/json`).then((response) => response.json());
-const page = pages.find((entry) => entry.type === 'page');
+const page = pages.find((entry) => entry.type === 'page' && /\/lookout-training\//.test(entry.url))
+  || pages.find((entry) => entry.type === 'page');
 assert(page, '没有可用的浏览器页面');
 const socket = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => {
@@ -46,7 +47,14 @@ await send('Page.navigate',{url});
 await evaluate(`new Promise((resolve,reject)=>{const started=Date.now();const timer=setInterval(()=>{if(window.__routeScene?.ready&&document.querySelector('.route-scene.live')&&document.querySelectorAll('#procedure li').length===6){clearInterval(timer);resolve(true);}else if(Date.now()-started>30000){clearInterval(timer);reject(new Error('途中瞭望页面初始化超时'));}},100);})`,true);
 if(mobile){await evaluate(`document.querySelector('#enter-training').click();true`);await new Promise((resolve)=>setTimeout(resolve,240));}
 const summary = await evaluate(`(()=>{
-  const names=[];window.__routeScene.routeRoot.traverse((object)=>{if(object.name)names.push(object.name);});
+  const names=[];const materialNames=[];let sourceTrackMeshes=0;let reflectiveRailMaterials=0;let maximumSignalScale=0;
+  window.__routeScene.routeRoot.traverse((object)=>{
+    if(object.name)names.push(object.name);
+    if(object.material?.name)materialNames.push(object.material.name);
+    if(/^A\\d+t.*\\.s:/i.test(object.name||''))sourceTrackMeshes+=1;
+    if(/rail[_ ]?tops?/i.test(object.material?.name||''))reflectiveRailMaterials+=1;
+    if(/SOURCE_.*SIGNAL.*_VISUAL/.test(object.name||''))maximumSignalScale=Math.max(maximumSignalScale,object.scale.x);
+  });
   return {
     title:document.title,
     app:document.body.dataset.trainingApp,
@@ -58,7 +66,21 @@ const summary = await evaluate(`(()=>{
     controlsText:document.querySelector('#training-controls').innerText,
     sceneNames:names.filter((name)=>name.startsWith('LOOKOUT_')),
     terrainTiles:window.__routeScene.routeRoot.getObjectByName('MSTS_SOURCE_TERRAIN')?.children.length||0,
-    selectedRails:names.filter((name)=>name.startsWith('SELECTED_ROUTE_RAIL_')).length,
+    terrainResolution:window.__routeScene.routeRoot.getObjectByName('MSTS_SOURCE_TERRAIN')?.userData.sourceResolution||0,
+    terrainCorridorLimited:Boolean(window.__routeScene.routeRoot.getObjectByName('MSTS_SOURCE_TERRAIN')?.userData.railwayCorridorLimited),
+    selectedTrackBeds:names.filter((name)=>name==='SELECTED_ROUTE_TEXTURED_TRACK').length,
+    continuousRails:names.filter((name)=>name.startsWith('LOOKOUT_RAIL_')).length,
+    continuousSleepers:names.filter((name)=>name==='LOOKOUT_CONTINUOUS_SLEEPERS').length,
+    catenaryRepairs:window.__routeScene.routeRoot.getObjectByName('LOOKOUT_REALIGNED_CATENARY_MASTS')?.children.length||0,
+    throughSignalPresent:Boolean(window.__routeScene.routeRoot.getObjectByName('TEACHING_2328_THROUGH_SIGNAL')),
+    throughSignalCount:names.filter((name)=>/^TEACHING_.*_THROUGH_SIGNAL$/.test(name)).length,
+    polishedRailMaterials:materialNames.filter((name)=>name==='LOOKOUT_POLISHED_RAIL_STEEL').length,
+    dullRailMaterials:materialNames.filter((name)=>name==='LOOKOUT_DULL_RAIL_STEEL').length,
+    sourceTrackMeshes,
+    reflectiveRailMaterials,
+    maximumSignalScale,
+    rendererTriangles:window.__routeScene.renderer.info.render.triangles,
+    rendererCalls:window.__routeScene.renderer.info.render.calls,
     scoreWeights:[...document.querySelectorAll('#procedure li')].map((item)=>item.innerText),
     overflowX:document.documentElement.scrollWidth>document.documentElement.clientWidth+1,
     stage:[Math.round(document.querySelector('#stage').getBoundingClientRect().width),Math.round(document.querySelector('#stage').getBoundingClientRect().height)],
@@ -66,19 +88,46 @@ const summary = await evaluate(`(()=>{
     metricsToggleVisible:getComputedStyle(document.querySelector('#metrics-toggle')).display!=='none',
   };
 })()`);
+console.log(JSON.stringify({ preflight: summary }, null, 2));
 assert.equal(summary.app,'lookout');
 assert.equal(summary.procedureItems,6);
 assert.equal(summary.routeLive,true);
 assert.equal(summary.trainingScope,'lookout');
 assert.equal(summary.trainingMode,'assessment');
 assert(summary.pathLength>LOOKOUT_TRAINING_CONFIG.finishDistance,'线路长度不足以覆盖结算点');
-for(const name of ['LOOKOUT_NORMAL_CROSSING','LOOKOUT_TUNNEL','LOOKOUT_TUNNEL_CLEARANCE_ANOMALY','LOOKOUT_RAIL_GLINT','LOOKOUT_INTRUSION_CROSSING','LOOKOUT_INTRUSION_ACTORS'])assert(summary.sceneNames.includes(name),`缺少三维对象 ${name}`);
+for(const name of ['LOOKOUT_NORMAL_CROSSING','LOOKOUT_TUNNEL','LOOKOUT_TUNNEL_EXIT_BACKLIGHT','LOOKOUT_TUNNEL_EXIT_GLARE','LOOKOUT_TUNNEL_EXIT_COLLAPSE','LOOKOUT_TUNNEL_EXIT_ROCK_1','LOOKOUT_INTRUSION_CROSSING','LOOKOUT_INTRUSION_ACTORS','LOOKOUT_SOURCE_SEDAN','LOOKOUT_CROSSING_APPROACH_ROAD','LOOKOUT_RAIL_LEFT_GLINT_BREAK'])assert(summary.sceneNames.includes(name),`缺少三维对象 ${name}`);
+assert(summary.sceneNames.includes('LOOKOUT_SOURCE_SEDAN'),'侵限道口未使用原游戏轿车模型');
+assert.equal(summary.throughSignalPresent,true,'未生成原游戏通过信号机');
+assert.equal(summary.throughSignalCount,5,'途中通过信号机数量应为5架');
 assert.equal(summary.terrainTiles,8,'原线路地形瓦片未完整加载');
-assert.equal(summary.selectedRails,2,'连续左右钢轨未完整生成');
-assert(summary.sceneNames.filter((name)=>name.startsWith('LOOKOUT_SOURCE_TUNNEL_SEGMENT_')).length>=6,'原线路隧道段未完整加载');
+assert.equal(summary.terrainResolution,257,'瞭望基线未加载8 m原生地形');
+assert.equal(summary.terrainCorridorLimited,true,'未建立本线路基限高');
+assert.equal(summary.selectedTrackBeds,1,'未生成连续的原游戏纹理道床');
+assert.equal(summary.continuousRails,6,'反光中断前、异常段和恢复段的左右实体钢轨未完整生成');
+assert.equal(summary.continuousSleepers,0,'不得叠加方盒轨枕层');
+assert(summary.catenaryRepairs>=1,'未重建侵入净空的接触网杆');
+assert.equal(summary.polishedRailMaterials,4,'正常钢轨顶面金属材质未完整应用');
+assert.equal(summary.dullRailMaterials,2,'钢轨反光中断段未使用粗糙材质');
+assert(summary.sourceTrackMeshes>=3,'原线路立体轨道网格未加载');
+assert(summary.reflectiveRailMaterials>=1,'原线路轨头材质未启用金属反光');
+assert(summary.maximumSignalScale<=1.001,'信号机灯位被非真实放大');
+assert(summary.rendererTriangles<1_500_000,'简化走廊渲染三角面过高');
+assert(summary.rendererCalls<350,'简化走廊绘制调用过高');
+assert(summary.sceneNames.filter((name)=>name.startsWith('LOOKOUT_SOURCE_TUNNEL_SEGMENT_')).length===3,'简化300 m原线路隧道段未完整加载');
 assert.match(summary.controlsText,/平稳发车4分、贯通试验16分/);
 assert.equal(summary.overflowX,false);
 if(mobile){assert.deepEqual(summary.stage,[viewportWidth,viewportHeight],'移动端舞台应填满横屏视口');assert.equal(summary.mobileControls,true,'移动端控制模式未启用');assert.equal(summary.metricsToggleVisible,true,'移动端运行数据按钮不可见');}
+const tunnelConfig=LOOKOUT_TRAINING_CONFIG.events.find((event)=>event.id==='tunnel-hazard');
+const tunnelLighting=await evaluate(`(()=>{const state=window.__trainingSim.state;state.distance=${tunnelConfig.tunnelEndDistance-80};state.speed=60;window.__routeScene.update(state.distance,state.speed,'front',true,1);window.__routeScene.updateLookoutTraining(state.lookout,state.distance);const backlight=window.__routeScene.lookoutVisuals.tunnelExitBacklight;return {opacity:backlight.material.opacity,visible:backlight.visible,exposure:window.__routeScene.renderer.toneMappingExposure};})()`);
+assert(tunnelLighting.visible&&tunnelLighting.opacity>.9,'洞内远看出口时高亮背光未保持过曝');
+assert(tunnelLighting.exposure<.6,'洞内曝光过高，无法形成洞内外反差');
+const tunnelAfter=await evaluate(`(()=>{const state=window.__trainingSim.state;state.distance=${tunnelConfig.tunnelEndDistance+45};window.__routeScene.update(state.distance,60,'front',true,1);window.__routeScene.updateLookoutTraining(state.lookout,state.distance);const backlight=window.__routeScene.lookoutVisuals.tunnelExitBacklight;return {opacity:backlight.material.opacity,visible:backlight.visible};})()`);
+assert(!tunnelAfter.visible&&tunnelAfter.opacity<.02,'出洞后过曝层未正常消失');
+const intrusionConfig=LOOKOUT_TRAINING_CONFIG.events.find((event)=>event.id==='intrusion-crossing');
+const carStart=await evaluate(`(()=>{const state=window.__trainingSim.state;state.distance=${intrusionConfig.hazardDistance-80};state.speed=0;window.__routeScene.update(state.distance,state.speed,'front',true,1);window.__routeScene.updateLookoutTraining(state.lookout,state.distance);return window.__routeScene.lookoutVisuals.intrusionVehicle.position.x;})()`);
+await new Promise((resolve)=>setTimeout(resolve,420));
+const carEnd=await evaluate(`window.__routeScene.lookoutVisuals.intrusionVehicle.position.x`);
+assert(carEnd-carStart>1,'列车停车时侵限轿车未继续从左向右运动');
 assert.deepEqual(errors,[]);
 assert.deepEqual(networkErrors,[]);
 const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
@@ -86,10 +135,16 @@ await writeFile(screenshotPath,Buffer.from(shot.data,'base64'));
 const sceneShots = {};
 const events = Object.fromEntries(LOOKOUT_TRAINING_CONFIG.events.map((event) => [event.id, event]));
 for (const [label, distance] of (mobile ? [] : [
-  ['normal-crossing', events['normal-crossing'].hazardDistance - 120],
-  ['tunnel', events['tunnel-hazard'].hazardDistance - 140],
-  ['rail', events['rail-glint-break'].hazardDistance - 120],
-  ['intrusion', events['intrusion-crossing'].hazardDistance - 120],
+  ['normal-crossing', events['normal-crossing'].hazardDistance - 45],
+  ['through-signal', LOOKOUT_TRAINING_CONFIG.throughSignalDistance - 45],
+  ['tunnel-entry', events['tunnel-hazard'].tunnelStartDistance - 70],
+  ['tunnel', events['tunnel-hazard'].tunnelEndDistance - 120],
+  ['tunnel-exit', events['tunnel-hazard'].tunnelEndDistance - 45],
+  ['tunnel-after', events['tunnel-hazard'].tunnelEndDistance + 45],
+  ['rail-approach', events['rail-glint-break'].hazardDistance - 360],
+  ['rail-transition', events['rail-glint-break'].hazardDistance - 220],
+  ['rail-break', events['rail-glint-break'].hazardDistance - 60],
+  ['intrusion', events['intrusion-crossing'].hazardDistance - 55],
 ])) {
   await evaluate(`(()=>{const state=window.__trainingSim.state;state.distance=${distance};state.speed=60;window.__routeScene.update(state.distance,state.speed,'front',true,1);window.__routeScene.updateLookoutTraining(state.lookout,state.distance);return true;})()`);
   await new Promise((resolve)=>setTimeout(resolve,180));

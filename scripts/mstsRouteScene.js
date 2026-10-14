@@ -8,6 +8,9 @@ import { LOOKOUT_TRAINING_CONFIG } from './lookoutTrainingConfig.js';
 const SOURCE_PATH = new URL('../assets/msts-neiyi-corridor/neiyi-lookout-full-scene.json', import.meta.url).href;
 const ROUTE_PATH = new URL('../assets/msts-neiyi/neiyi-5635-trackdb-path.json', import.meta.url).href;
 const TERRAIN_PATH = new URL('../assets/msts-neiyi-corridor/neiyi-lookout-terrain.json', import.meta.url).href;
+const LOOKOUT_TERRAIN_PATH = new URL('../assets/msts-neiyi-corridor/neiyi-lookout-terrain-native.json', import.meta.url).href;
+const LOOKOUT_PREFAB_PATH = new URL('../assets/msts-neiyi-corridor/lookout-source-prefabs.json', import.meta.url).href;
+const LOOKOUT_REPAIR_ASSET_PATH = new URL('../assets/msts-neiyi-corridor/lookout-repair-assets.json', import.meta.url).href;
 const TEXTURE_PATH = new URL('../assets/msts-neiyi-corridor/textures/', import.meta.url).href;
 // GitHub Pages 区分大小写；原游戏导出中的三处引用大小写与发布文件名不同。
 const TEXTURE_FILE_ALIASES = Object.freeze({
@@ -19,15 +22,26 @@ const TEXTURE_FILE_ALIASES = Object.freeze({
 });
 // 原游戏世界块提供场景、道岔、信号机和隧道；同一条 TrackDB 中心线
 // 同时生成连续的训练线路表面，避免 MSTS 分节模型在 WebGL 中出现接缝。
-const ROUTE_RENDER_OPTIONS = Object.freeze({
+const DEFAULT_ROUTE_RENDER_OPTIONS = Object.freeze({
   proceduralTrack: true,
   railHighlights: true,
+  continuousRailHeads: false,
+  sourceDepartureSignal: true,
+});
+
+const LOOKOUT_ROUTE_RENDER_OPTIONS = Object.freeze({
+  proceduralTrack: true,
+  railHighlights: false,
+  continuousRailHeads: true,
   sourceDepartureSignal: true,
 });
 
 export class MstsRouteScene {
-  constructor(canvas) {
+  constructor(canvas, options = {}) {
     this.canvas = canvas;
+    this.profile = options.profile || 'departure';
+    this.isLookout = this.profile === 'lookout';
+    this.renderOptions = this.isLookout ? LOOKOUT_ROUTE_RENDER_OPTIONS : DEFAULT_ROUTE_RENDER_OPTIONS;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     const coarse = matchMedia('(pointer: coarse)').matches;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, coarse ? 1.15 : 1.5));
@@ -60,9 +74,12 @@ export class MstsRouteScene {
     this.departureSignal = null;
     this.neighborSignal = null;
     this.throughSignal = null;
+    this.throughSignals = [];
     this.passengerCars = [];
     this.lookoutRoot = null;
     this.lookoutVisuals = {};
+    this.intrusionVehicleMotionStart = null;
+    this.lookoutCatenaryRepairDistances = [];
     this.signalRaycaster = new THREE.Raycaster();
     this.signalPointer = new THREE.Vector2();
     this.materialCache = new Map();
@@ -94,30 +111,45 @@ export class MstsRouteScene {
 
   async load() {
     try {
-      const [sceneResponse, pathResponse, terrainResponse] = await Promise.all([
+      const requests = [
         fetch(SOURCE_PATH, { cache: 'no-store' }),
         fetch(ROUTE_PATH, { cache: 'no-store' }),
-        fetch(TERRAIN_PATH, { cache: 'no-store' }),
-      ]);
+        fetch(this.isLookout ? LOOKOUT_TERRAIN_PATH : TERRAIN_PATH, { cache: 'no-store' }),
+      ];
+      if (this.isLookout) {
+        requests.push(fetch(LOOKOUT_PREFAB_PATH, { cache: 'no-store' }));
+        requests.push(fetch(LOOKOUT_REPAIR_ASSET_PATH, { cache: 'no-store' }));
+      }
+      const [sceneResponse, pathResponse, terrainResponse, prefabResponse, repairAssetResponse] = await Promise.all(requests);
       if (!sceneResponse.ok) throw new Error(`路线场景加载失败：HTTP ${sceneResponse.status}`);
       if (!pathResponse.ok) throw new Error(`轨道中心线加载失败：HTTP ${pathResponse.status}`);
       if (!terrainResponse.ok) throw new Error(`原线路地形加载失败：HTTP ${terrainResponse.status}`);
-      const [sceneData, pathData, terrainData] = await Promise.all([
+      if (this.isLookout && !prefabResponse?.ok) throw new Error(`原线路道口素材加载失败：HTTP ${prefabResponse?.status}`);
+      if (this.isLookout && !repairAssetResponse?.ok) throw new Error(`原游戏补充素材加载失败：HTTP ${repairAssetResponse?.status}`);
+      const [sceneData, pathData, terrainData, prefabData, repairAssetData] = await Promise.all([
         sceneResponse.json(),
         pathResponse.json(),
         terrainResponse.json(),
+        prefabResponse?.json() || null,
+        repairAssetResponse?.json() || null,
       ]);
+      if (repairAssetData?.shapes?.['tongguo.s']) {
+        repairAssetData.shapes['tongguo.s'].materials.forEach((material) => {
+          if (material.texture === 'Sign.png') material.texture = 'throughSignalSign.png';
+        });
+      }
       this.buildRoutePath(pathData, sceneData);
       this.buildTerrain(terrainData);
       this.buildRoute(sceneData);
       this.buildPassengerConsist(12);
       const renderedRouteDistance = Math.min(this.pathLength, LOOKOUT_TRAINING_CONFIG.finishDistance + 350);
       const railEvent = LOOKOUT_TRAINING_CONFIG.events.find((item) => item.visualKind === 'rail');
-      if (ROUTE_RENDER_OPTIONS.proceduralTrack) this.buildSelectedRouteTrack(renderedRouteDistance);
-      if (ROUTE_RENDER_OPTIONS.railHighlights) this.buildRailHighlights(renderedRouteDistance, railEvent);
-      if (ROUTE_RENDER_OPTIONS.sourceDepartureSignal) this.buildSourceDepartureSignal(sceneData);
+      if (this.renderOptions.proceduralTrack) this.buildSelectedRouteTrack(renderedRouteDistance);
+      if (this.renderOptions.railHighlights) this.buildRailHighlights(renderedRouteDistance, railEvent);
+      if (this.renderOptions.continuousRailHeads) this.buildContinuousRailHeads(renderedRouteDistance);
+      if (this.renderOptions.sourceDepartureSignal) this.buildSourceDepartureSignal(sceneData);
       this.buildSourceRouteSignalLights(sceneData);
-      this.buildLookoutTrainingScenery(sceneData);
+      if (this.isLookout) this.buildLookoutTrainingScenery(sceneData, prefabData, repairAssetData);
       this.ready = true;
       this.applyCamera();
       this.canvas.dispatchEvent(new CustomEvent('route-ready', {
@@ -153,6 +185,9 @@ export class MstsRouteScene {
     });
     const root = new THREE.Group();
     root.name = 'MSTS_SOURCE_TERRAIN';
+    root.userData.sourceResolution = Number(data?.summary?.resolution) || 0;
+    root.userData.railwayCorridorLimited = this.isLookout;
+    const corridorIndex = this.isLookout ? this.buildTerrainCorridorIndex() : null;
     for (const tile of data?.tiles || []) {
       const resolution = Number(tile.resolution) || 0;
       if (resolution < 3 || tile.heights?.length !== resolution * resolution) continue;
@@ -167,7 +202,9 @@ export class MstsRouteScene {
           const localX = -tileSize * 0.5 + columnRatio * tileSize;
           const x = -(((tile.tileX - originTileX) * tileSize) + localX - originX);
           const z = ((tile.tileZ - originTileZ) * tileSize) + localZ - originZ;
-          positions.push(x, Number(tile.heights[row * resolution + column]) - 0.12, z);
+          const sourceHeight = Number(tile.heights[row * resolution + column]) - 0.12;
+          const y = corridorIndex ? this.limitTerrainAtRailway(x, z, sourceHeight, corridorIndex) : sourceHeight;
+          positions.push(x, y, z);
           uvs.push(columnRatio, 1 - rowRatio);
         }
       }
@@ -196,10 +233,70 @@ export class MstsRouteScene {
     if (root.children.length && this.ground) this.ground.visible = false;
   }
 
+  buildTerrainCorridorIndex() {
+    const cellSize = 32;
+    const outerWidth = 24;
+    const maximumDistance = Math.min(this.pathLength, LOOKOUT_TRAINING_CONFIG.finishDistance + 350);
+    const cells = new Map();
+    const segments = [];
+    for (let index = 1; index < this.routePoints.length; index += 1) {
+      if (this.routeDistances[index - 1] > maximumDistance) break;
+      const a = this.routePoints[index - 1];
+      const b = this.routePoints[index];
+      const segmentIndex = segments.length;
+      segments.push({ a, b });
+      const minCellX = Math.floor((Math.min(a.x, b.x) - outerWidth) / cellSize);
+      const maxCellX = Math.floor((Math.max(a.x, b.x) + outerWidth) / cellSize);
+      const minCellZ = Math.floor((Math.min(a.z, b.z) - outerWidth) / cellSize);
+      const maxCellZ = Math.floor((Math.max(a.z, b.z) + outerWidth) / cellSize);
+      for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+        for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+          const key = `${cellX},${cellZ}`;
+          if (!cells.has(key)) cells.set(key, []);
+          cells.get(key).push(segmentIndex);
+        }
+      }
+    }
+    // 8 m高程格点不一定落在轨道中心，12 m内平整可确保中心线
+    // 周围至少两列格点受控；24 m外完全恢复原地形。
+    return { cellSize, innerWidth: 12, outerWidth, cells, segments };
+  }
+
+  limitTerrainAtRailway(x, z, sourceHeight, index) {
+    const key = `${Math.floor(x / index.cellSize)},${Math.floor(z / index.cellSize)}`;
+    const candidates = index.cells.get(key);
+    if (!candidates?.length) return sourceHeight;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    let railwayHeight = sourceHeight;
+    for (const segmentIndex of candidates) {
+      const { a, b } = index.segments[segmentIndex];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const lengthSquared = dx * dx + dz * dz;
+      const ratio = lengthSquared > 0
+        ? THREE.MathUtils.clamp(((x - a.x) * dx + (z - a.z) * dz) / lengthSquared, 0, 1)
+        : 0;
+      const projectedX = a.x + dx * ratio;
+      const projectedZ = a.z + dz * ratio;
+      const distance = Math.hypot(x - projectedX, z - projectedZ);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        railwayHeight = THREE.MathUtils.lerp(a.y, b.y, ratio);
+      }
+    }
+    if (bestDistance >= index.outerWidth) return sourceHeight;
+    const blend = bestDistance <= index.innerWidth
+      ? 1
+      : 1 - THREE.MathUtils.smoothstep(bestDistance, index.innerWidth, index.outerWidth);
+    const corridorCap = railwayHeight + 0.02;
+    return Math.min(sourceHeight, THREE.MathUtils.lerp(sourceHeight, corridorCap, blend));
+  }
+
   getMaterial(definition) {
     const textureName = definition?.texture || '';
     const fileName = TEXTURE_FILE_ALIASES[textureName.toLowerCase()] || textureName;
-    const key = `${fileName}|${definition?.alphaTestMode || 0}`;
+    const materialName = definition?.name || '';
+    const key = `${fileName}|${materialName}|${definition?.alphaTestMode || 0}`;
     if (this.materialCache.has(key)) return this.materialCache.get(key);
     let texture = null;
     if (textureName) {
@@ -212,26 +309,41 @@ export class MstsRouteScene {
       texture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
     }
     const isTrackMaterial = /track/i.test(textureName);
-    const material = new THREE.MeshStandardMaterial({
+    const isRailTop = /rail[_ ]?tops?/i.test(materialName);
+    const isRailSide = /rail[_ ]?side/i.test(materialName);
+    const materialParameters = {
       color: texture ? 0xffffff : 0xadb5b3,
       map: texture,
-      roughness: isTrackMaterial ? 0.48 : 0.88,
-      metalness: isTrackMaterial ? 0.24 : 0.03,
+      roughness: isRailTop ? 0.18 : isRailSide ? 0.42 : isTrackMaterial ? 0.84 : 0.88,
+      metalness: isRailTop ? 0.9 : isRailSide ? 0.5 : isTrackMaterial ? 0.08 : 0.03,
       side: THREE.DoubleSide,
       alphaTest: texture ? 0.08 : 0,
-    });
+    };
+    const material = isRailTop
+      ? new THREE.MeshPhysicalMaterial({
+        ...materialParameters,
+        clearcoat: 0.72,
+        clearcoatRoughness: 0.12,
+      })
+      : new THREE.MeshStandardMaterial(materialParameters);
+    if (isRailTop) {
+      material.emissive.set('#26343b');
+      material.emissiveIntensity = 0.16;
+    }
     material.name = definition?.name || textureName || 'MSTS_MATERIAL';
     this.materialCache.set(key, material);
     return material;
   }
 
-  createSourceShapeObject(data, fileName, name = fileName) {
+  createSourceShapeObject(data, fileName, name = fileName, options = {}) {
     const shape = data?.shapes?.[fileName];
     if (!shape?.groups?.length) return null;
     const root = new THREE.Group();
     root.name = name;
     shape.groups.forEach((group, groupIndex) => {
       if (!group.positions?.length) return;
+      const materialDefinition = shape.materials[group.materialIndex];
+      if (options.groupFilter && !options.groupFilter(group, groupIndex, materialDefinition)) return;
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(group.positions, 3));
       if (group.uvs?.length === (group.positions.length / 3) * 2) {
@@ -239,7 +351,7 @@ export class MstsRouteScene {
       }
       geometry.computeVertexNormals();
       geometry.computeBoundingSphere();
-      const mesh = new THREE.Mesh(geometry, this.getMaterial(shape.materials[group.materialIndex]));
+      const mesh = new THREE.Mesh(geometry, this.getMaterial(materialDefinition));
       mesh.name = `${fileName}:${groupIndex}`;
       root.add(mesh);
     });
@@ -249,11 +361,53 @@ export class MstsRouteScene {
   buildRoute(data) {
     const instancesByShape = new Map();
     data.instances.forEach((instance) => {
-      if (instance.type === 'TrackObj' && /^A\d+t/i.test(instance.shape || '')) {
-        const projection = this.projectPointToPath(instance.position);
-        if (projection
-          && projection.lateralDistance < 4.2
-          && projection.alongDistance <= LOOKOUT_TRAINING_CONFIG.finishDistance + 500) return;
+      const projection = this.isLookout
+        ? this.projectPointToPath(instance.position, LOOKOUT_TRAINING_CONFIG.finishDistance + 500)
+        : null;
+      if (this.isLookout) {
+        // 瞭望项目只保留0–6 km教学走廊及其周边可见场景，不把原线路
+        // 数十公里的远程实例一起提交给渲染器。
+        if (!projection
+          || projection.alongDistance > LOOKOUT_TRAINING_CONFIG.finishDistance + 500
+          || projection.lateralDistance > 450) return;
+        const tunnel = LOOKOUT_TRAINING_CONFIG.events.find((item) => item.visualKind === 'tunnel');
+        const insideTeachingTunnel = projection
+          && projection.alongDistance >= tunnel.tunnelStartDistance - 4
+          && projection.alongDistance <= tunnel.tunnelEndDistance + 4
+          && Math.abs(projection.signedLateral) <= 12;
+        // 教学隧道已自带轨道、洞壁和洞门，清除这一小段原露天线路上的
+        // 接触网杆、信号和轨道，避免它们穿入隧道内部。
+        if (insideTeachingTunnel) return;
+
+        // 原接触网杆的对象原点位于原轨道中心，真正的杆柱约在局部 +X 3 m。
+        // 主线中心线重建后，少数杆柱会侵入新线路。按实际杆柱位置做净空判断，
+        // 将侵线杆记录下来，稍后沿最终中心线原位重建，而不是只删掉造成断档。
+        if (/^SweGantry1\.s$/i.test(instance.shape || '')) {
+          const instancePosition = new THREE.Vector3().fromArray(instance.position);
+          const instanceQuaternion = new THREE.Quaternion().fromArray(instance.quaternion).normalize();
+          const mastPosition = new THREE.Vector3(3, 0, 0).applyQuaternion(instanceQuaternion).add(instancePosition);
+          const mastProjection = this.projectPointToPath(mastPosition.toArray(), LOOKOUT_TRAINING_CONFIG.finishDistance + 350);
+          if (mastProjection
+            && Math.abs(mastProjection.signedLateral) < 2.65
+            && Math.abs(mastProjection.verticalOffset || 0) < 3) {
+            this.lookoutCatenaryRepairDistances.push(mastProjection.alongDistance);
+            return;
+          }
+        }
+      }
+      if (this.renderOptions.proceduralTrack && instance.type === 'TrackObj' && /^A\d+t/i.test(instance.shape || '')) {
+        const trackProjection = projection || this.projectPointToPath(instance.position);
+        if (trackProjection
+          && trackProjection.lateralDistance < 4.2
+          && trackProjection.alongDistance <= LOOKOUT_TRAINING_CONFIG.finishDistance + 500) return;
+      }
+      if (this.renderOptions.continuousRailHeads && instance.type === 'TrackObj' && /^A\d+t/i.test(instance.shape || '')) {
+        const trackProjection = projection || this.projectPointToPath(instance.position);
+        // 原分节主线轨道在 WebGL 中的接缝和交叠会造成假分岔；主线由
+        // 同一中心线的实体钢轨头和连续轨枕承担，保留侧线和其他原轨道场景。
+        if (trackProjection
+          && trackProjection.lateralDistance < 4.2
+          && trackProjection.alongDistance <= LOOKOUT_TRAINING_CONFIG.finishDistance + 500) return;
       }
       if (!instancesByShape.has(instance.shape)) instancesByShape.set(instance.shape, []);
       instancesByShape.get(instance.shape).push(instance);
@@ -418,7 +572,7 @@ export class MstsRouteScene {
     });
   }
 
-  projectPointToPath(position) {
+  projectPointToPath(position, maximumDistance = this.pathLength) {
     const target = new THREE.Vector3().fromArray(position);
     const closest = new THREE.Vector3();
     const segment = new THREE.Vector3();
@@ -426,6 +580,7 @@ export class MstsRouteScene {
     const tangent = new THREE.Vector3();
     let best = null;
     for (let index = 1; index < this.routePoints.length; index += 1) {
+      if (this.routeDistances[index - 1] > maximumDistance) break;
       const start = this.routePoints[index - 1];
       const end = this.routePoints[index];
       segment.subVectors(end, start);
@@ -445,6 +600,7 @@ export class MstsRouteScene {
           alongDistance: this.routeDistances[index - 1] + Math.sqrt(lengthSq) * ratio,
           lateralDistance: distance,
           signedLateral: relative.dot(right),
+          verticalOffset: relative.y,
           point: closest.clone(),
           tangent: tangent.clone(),
         };
@@ -553,6 +709,88 @@ export class MstsRouteScene {
     }
     this.routeRoot.add(glintRoot);
     this.lookoutVisuals.railGlint = glintRoot;
+  }
+
+  buildContinuousRailHeads(maxDistance) {
+    const railEvent = LOOKOUT_TRAINING_CONFIG.events.find((item) => item.visualKind === 'rail');
+    // 正常反光在评分危险边界处突然终止，后续180 m保持暗哑。
+    // 这样学生从约400 m外看到的视觉边界，与必须停车的位置一致。
+    const gapStart = Math.max(0, Number(railEvent?.hazardDistance || 0));
+    const gapEnd = Math.min(maxDistance, Number(railEvent?.glintBreakEndDistance || gapStart + 180));
+    const polishedMaterial = new THREE.MeshPhysicalMaterial({
+      // 正常区段是真实的立体轨头材质，不是悬浮在道床上的发光线。
+      // 在课堂常见显示器上保留较强的冷色高光，以便与异常段对比。
+      color: '#f6fcff',
+      metalness: 1,
+      roughness: 0.035,
+      clearcoat: 1,
+      clearcoatRoughness: 0.018,
+      emissive: '#b9dce8',
+      emissiveIntensity: 0.62,
+    });
+    polishedMaterial.name = 'LOOKOUT_POLISHED_RAIL_STEEL';
+    // 异常段钢轨实体仍然存在，但轨面不参与环境高光计算，避免主光源把“中断”重新照亮。
+    const dullMaterial = new THREE.MeshBasicMaterial({ color: '#07090a', toneMapped: true });
+    dullMaterial.name = 'LOOKOUT_DULL_RAIL_STEEL';
+    const gaugeHalf = 0.7175;
+    // 教学显示用轨头宽度略作视距补偿，仍是完整立体钢轨的顶面而非另加亮线。
+    const halfWidth = 0.06;
+    const baseHeight = 0.18;
+    const railHeight = 0.15;
+    const railRoot = new THREE.Group();
+    railRoot.name = 'LOOKOUT_CONTINUOUS_SOURCE_STYLE_RAILS';
+
+    const buildRailSection = (railOffset, startDistance, endDistance, material, suffix) => {
+      if (endDistance - startDistance < 0.5) return;
+      const positions = [];
+      const indices = [];
+      const sampleDistances = [];
+      for (let distance = startDistance; distance < endDistance; distance += 4) sampleDistances.push(distance);
+      sampleDistances.push(endDistance);
+      sampleDistances.forEach((distance, index) => {
+        const { point, right, up } = this.getLookoutPathFrame3D(distance);
+        const center = point.clone().addScaledVector(right, railOffset).addScaledVector(up, baseHeight);
+        const bottomLeft = center.clone().addScaledVector(right, -halfWidth);
+        const bottomRight = center.clone().addScaledVector(right, halfWidth);
+        const topLeft = bottomLeft.clone().addScaledVector(up, railHeight);
+        const topRight = bottomRight.clone().addScaledVector(up, railHeight);
+        positions.push(
+          bottomLeft.x, bottomLeft.y, bottomLeft.z,
+          bottomRight.x, bottomRight.y, bottomRight.z,
+          topLeft.x, topLeft.y, topLeft.z,
+          topRight.x, topRight.y, topRight.z,
+        );
+        if (index > 0) {
+          const previousBase = (index - 1) * 4;
+          const currentBase = index * 4;
+          indices.push(
+            previousBase, currentBase, previousBase + 2,
+            previousBase + 2, currentBase, currentBase + 2,
+            previousBase + 1, previousBase + 3, currentBase + 1,
+            previousBase + 3, currentBase + 3, currentBase + 1,
+            previousBase + 2, currentBase + 2, previousBase + 3,
+            previousBase + 3, currentBase + 2, currentBase + 3,
+          );
+        }
+      });
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+      const rail = new THREE.Mesh(geometry, material);
+      rail.name = `LOOKOUT_RAIL_${railOffset < 0 ? 'LEFT' : 'RIGHT'}_${suffix}`;
+      rail.frustumCulled = false;
+      railRoot.add(rail);
+    };
+
+    for (const railOffset of [-gaugeHalf, gaugeHalf]) {
+      buildRailSection(railOffset, 0, gapStart, polishedMaterial, 'POLISHED_BEFORE');
+      buildRailSection(railOffset, gapStart, gapEnd, dullMaterial, 'GLINT_BREAK');
+      buildRailSection(railOffset, gapEnd, maxDistance, polishedMaterial, 'POLISHED_AFTER');
+    }
+    this.routeRoot.add(railRoot);
+    this.lookoutVisuals.railGlint = railRoot;
   }
 
   buildSelectedRouteTrack(maxDistance) {
@@ -809,45 +1047,58 @@ export class MstsRouteScene {
       .sort((a, b) => Math.abs(a.projection.alongDistance - throughTarget) - Math.abs(b.projection.alongDistance - throughTarget))[0] || null;
   }
 
-  buildTeachingThroughSignal() {
-    const distance = Number(ROUTE_CONTEXT.firstBlockEndDistance || 0);
-    if (!distance || distance >= this.pathLength) return;
-    const point = this.getPathPosition(distance);
-    const before = this.getPathPosition(Math.max(0, distance - 4));
-    const after = this.getPathPosition(Math.min(this.pathLength, distance + 4));
-    const tangent = after.sub(before).setY(0).normalize();
-    const right = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize();
-    const root = new THREE.Group();
-    root.name = 'TEACHING_2328_THROUGH_SIGNAL';
-    root.position.copy(point).addScaledVector(right, 3.6);
-    const poleMaterial = new THREE.MeshStandardMaterial({ color: '#363d42', roughness: .78, metalness: .5 });
-    const headMaterial = new THREE.MeshStandardMaterial({ color: '#101416', roughness: .7, metalness: .25 });
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(.08, .1, 4.2, 10), poleMaterial);
-    pole.position.y = 2.1;
-    const head = new THREE.Mesh(new THREE.BoxGeometry(.62, 1.55, .28), headMaterial);
-    head.position.y = 4.35;
-    root.add(pole, head);
-    const lampGeometry = new THREE.SphereGeometry(.13, 16, 12);
-    const lamps = {};
-    for (const [name, y] of [['green',4.78],['greenLower',4.44],['yellow',4.10],['red',3.76]]) {
-      const material = new THREE.MeshBasicMaterial({ color: name === 'green' ? '#28e878' : '#131819', toneMapped: false });
-      const lamp = new THREE.Mesh(lampGeometry, material);
-      lamp.position.set(0, y, -.17);
-      root.add(lamp);
-      lamps[name] = { lensMaterial: material, glowMaterial: new THREE.SpriteMaterial({ transparent: true, opacity: 0 }) };
+  buildTeachingThroughSignals(repairAssetData) {
+    const configuredSignals = LOOKOUT_TRAINING_CONFIG.throughSignals || [
+      { id: '2328', distance: LOOKOUT_TRAINING_CONFIG.throughSignalDistance },
+    ];
+    this.throughSignals = [];
+    for (const configuredSignal of configuredSignals) {
+      const distance = Number(configuredSignal.distance);
+      if (!distance || distance >= this.pathLength) continue;
+      const signalId = String(configuredSignal.id || this.throughSignals.length + 1);
+      const root = new THREE.Group();
+      root.name = `TEACHING_${signalId}_THROUGH_SIGNAL`;
+      root.userData.signalId = signalId;
+      this.placeLookoutObject3D(root, distance, 3.6, 0);
+      // 使用原游戏京广线路的 tongguo.s，而不是把进站预告信号机误作通过信号机。
+      const body = this.createSourceShapeObject(repairAssetData, 'tongguo.s', `SOURCE_TONGGUO_SIGNAL_BODY_${signalId}`);
+      if (!body) throw new Error('原游戏通过信号机模型数据无效。');
+      root.add(body);
+
+      // 灯位和半径直接取自原线路 sigcfg.dat 的 CHINAtongguoLight。
+      const lampGeometry = new THREE.SphereGeometry(.115, 16, 12);
+      const lamps = {};
+      const glowSprites = [];
+      const lampDefinitions = { green: 5.548, yellow: 4.963, red: 5.255 };
+      for (const [name, y] of Object.entries(lampDefinitions)) {
+        const on = name === 'green';
+        const color = { green: '#28e878', yellow: '#f6c744', red: '#e54a46' }[name];
+        const material = new THREE.MeshBasicMaterial({ color: on ? color : '#121617', toneMapped: false });
+        const lamp = new THREE.Mesh(lampGeometry, material);
+        lamp.position.set(0, y, -0.02);
+        root.add(lamp);
+        const glowMaterial = new THREE.SpriteMaterial({
+          map: this.createSignalGlowTexture(),
+          color,
+          transparent: true,
+          opacity: on ? 0.94 : 0,
+          depthWrite: false,
+          toneMapped: false,
+        });
+        const glow = new THREE.Sprite(glowMaterial);
+        glow.position.copy(lamp.position);
+        glow.userData.basePosition = lamp.position.clone();
+        glow.renderOrder = 8;
+        root.add(glow);
+        glowSprites.push(glow);
+        lamps[name] = { lensMaterial: material, glowMaterial };
+      }
+      this.routeRoot.add(root);
+      const signal = { root, visual: root, body, lamps, lampMeshes: [], glowSprites, projection: { alongDistance: distance } };
+      this.throughSignals.push(signal);
+      this.applySignalAspect(signal, 'green');
     }
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = 256; labelCanvas.height = 96;
-    const context = labelCanvas.getContext('2d');
-    context.fillStyle = 'rgba(4,18,28,.88)'; context.fillRect(0,0,256,96);
-    context.strokeStyle = '#91dbf6'; context.lineWidth = 4; context.strokeRect(2,2,252,92);
-    context.fillStyle = '#fff'; context.textAlign = 'center'; context.font = '700 34px Microsoft YaHei'; context.fillText('2328',128,39);
-    context.font = '600 22px Microsoft YaHei'; context.fillText('K231+738',128,75);
-    const labelTexture = new THREE.CanvasTexture(labelCanvas); labelTexture.colorSpace = THREE.SRGBColorSpace;
-    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTexture, transparent: true, depthWrite: false }));
-    label.position.set(0,5.75,0); label.scale.set(3.2,1.2,1); root.add(label);
-    this.routeRoot.add(root);
-    this.throughSignal = { root, visual: root, lamps, lampMeshes: [], glowSprites: [], projection: { alongDistance: distance } };
+    this.throughSignal = this.throughSignals[0] || null;
   }
 
   applySignalAspect(signal, aspect) {
@@ -869,16 +1120,17 @@ export class MstsRouteScene {
   }
 
   updateSignalTeachingVisibility() {
-    for (const signal of [this.departureSignal, this.neighborSignal, this.throughSignal]) {
+    const teachingSignals = this.throughSignals.length ? this.throughSignals : [this.throughSignal];
+    for (const signal of [this.departureSignal, this.neighborSignal, ...teachingSignals]) {
       if (!signal) continue;
       const head = signal.root.localToWorld(new THREE.Vector3(0, 0.70, 0));
       const distance = this.camera.position.distanceTo(head);
-      // 120 m 内恢复游戏原比例；远距采用教学 LOD，使 1.37 m 矮型信号机仍可辨认。
-      const teachingScale = THREE.MathUtils.clamp(distance / 105, 1, 5.2);
-      signal.visual.scale.setScalar(signal===this.throughSignal?THREE.MathUtils.clamp(distance/170,1,2.3):teachingScale);
-      const glowSize = THREE.MathUtils.clamp(distance * 0.0075, 0.16, 4.3);
+      // 保留原游戏信号机和灯位的真实比例。远距只轻微增加光晕，
+      // 不再放大信号机本体或灯位，避免产生“假信号机”观感。
+      signal.visual.scale.setScalar(1);
+      const glowSize = THREE.MathUtils.clamp(distance * 0.0022, 0.14, 0.65);
       signal.glowSprites.forEach((glow) => {
-        glow.position.copy(glow.userData.basePosition).multiplyScalar(teachingScale);
+        glow.position.copy(glow.userData.basePosition);
         glow.scale.setScalar(glowSize);
       });
     }
@@ -894,6 +1146,19 @@ export class MstsRouteScene {
     return { point, tangent, right: new THREE.Vector3(tangent.z, 0, -tangent.x).normalize() };
   }
 
+  getLookoutPathFrame3D(distance) {
+    const point = this.getPathPosition(distance);
+    const before = this.getPathPosition(Math.max(0, distance - 3));
+    const after = this.getPathPosition(Math.min(this.pathLength, distance + 6));
+    const forward = after.sub(before);
+    if (forward.lengthSq() < 0.000001) forward.copy(this.forward);
+    forward.normalize();
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
+    const up = new THREE.Vector3().crossVectors(forward, right).normalize();
+    const rotation = new THREE.Matrix4().makeBasis(right, up, forward);
+    return { point, forward, right, up, quaternion: new THREE.Quaternion().setFromRotationMatrix(rotation) };
+  }
+
   placeLookoutObject(object, distance, lateral = 0, vertical = 0) {
     const { point, tangent, right } = this.getLookoutPathFrame(distance);
     object.position.copy(point).addScaledVector(right, lateral);
@@ -904,68 +1169,210 @@ export class MstsRouteScene {
     return object;
   }
 
-  buildCrossing(config, intrusion = false) {
+  placeLookoutObject3D(object, distance, lateral = 0, vertical = 0) {
+    const { point, right, up, quaternion } = this.getLookoutPathFrame3D(distance);
+    object.position.copy(point).addScaledVector(right, lateral).addScaledVector(up, vertical);
+    object.quaternion.copy(quaternion);
+    object.userData.basePosition = object.position.clone();
+    object.userData.right = right;
+    return object;
+  }
+
+  buildLookoutCatenaryRepairs(sceneData) {
+    const distances = [...new Set(this.lookoutCatenaryRepairDistances
+      .map((distance) => Math.round(distance * 10) / 10))]
+      .sort((a, b) => a - b);
+    if (!distances.length) return;
     const root = new THREE.Group();
-    root.name = intrusion ? 'LOOKOUT_INTRUSION_CROSSING' : 'LOOKOUT_NORMAL_CROSSING';
-    this.placeLookoutObject(root, config.hazardDistance);
-    const roadMaterial = new THREE.MeshStandardMaterial({ color: '#484b4d', roughness: .92 });
-    const paintMaterial = new THREE.MeshBasicMaterial({ color: '#eee6ba' });
-    const postMaterial = new THREE.MeshStandardMaterial({ color: '#e6e8e7', roughness: .72 });
-    const stripeMaterial = new THREE.MeshStandardMaterial({ color: '#d83c37', roughness: .7 });
-    const road = new THREE.Mesh(new THREE.BoxGeometry(22, .12, 7), roadMaterial);
-    road.position.y = .02;root.add(road);
-    for (const x of [-6,-3,0,3,6]) {
-      const marking = new THREE.Mesh(new THREE.BoxGeometry(1.5,.03,.16),paintMaterial);
-      marking.position.set(x,.1,0);root.add(marking);
+    root.name = 'LOOKOUT_REALIGNED_CATENARY_MASTS';
+    distances.forEach((distance, index) => {
+      const mast = this.createSourceShapeObject(sceneData, 'SweGantry1.s', `LOOKOUT_REALIGNED_MAST_${String(index + 1).padStart(2, '0')}`);
+      if (!mast) return;
+      this.placeLookoutObject3D(mast, distance);
+      mast.userData.repairedAtDistance = distance;
+      root.add(mast);
+    });
+    root.userData.repairedCount = root.children.length;
+    this.routeRoot.add(root);
+  }
+
+  buildSourcePrefab(prefab, distance, name) {
+    if (!prefab?.anchor || !prefab?.instances?.length || !prefab?.shapes) return null;
+    const root = new THREE.Group();
+    root.name = name;
+    const targetFrame = this.getLookoutPathFrame3D(distance);
+    const sourceAnchorPosition = new THREE.Vector3().fromArray(prefab.anchor.position);
+    const sourceAnchorQuaternion = new THREE.Quaternion().fromArray(prefab.anchor.quaternion).normalize();
+    root.position.copy(targetFrame.point);
+    root.quaternion.copy(targetFrame.quaternion).multiply(sourceAnchorQuaternion.clone().invert());
+    for (const instance of prefab.instances) {
+      const object = this.createSourceShapeObject(prefab, instance.shape, `${name}_${instance.type}_${instance.uid}`);
+      if (!object) continue;
+      object.position.fromArray(instance.position).sub(sourceAnchorPosition);
+      object.quaternion.fromArray(instance.quaternion).normalize();
+      object.userData.sourceUid = instance.uid;
+      object.userData.sourceShape = instance.shape;
+      root.add(object);
     }
-    for (const side of [-1,1]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(.09,.11,2.2,10),postMaterial);
-      post.position.set(side*5.2,1.1,-2.3);root.add(post);
-      const crossA = new THREE.Mesh(new THREE.BoxGeometry(.16,2.2,.12),stripeMaterial);
-      crossA.position.set(side*5.2,2.5,-2.3);crossA.rotation.z=.75;root.add(crossA);
-      const crossB = crossA.clone();crossB.rotation.z=-.75;root.add(crossB);
+    root.userData.sourceWorldTile = prefab.sourceWorldTile || '';
+    root.userData.sourceAnchorUid = prefab.anchor.uid;
+    return root;
+  }
+
+  buildCrossingInfrastructure(root, intrusion) {
+    const roadMaterial = new THREE.MeshStandardMaterial({ color: '#3d4143', roughness: 0.94, metalness: 0.02 });
+    const deckMaterial = new THREE.MeshStandardMaterial({ color: '#706d65', roughness: 0.9, metalness: 0.04 });
+    const road = new THREE.Mesh(new THREE.BoxGeometry(86, 0.08, 7.2), roadMaterial);
+    road.name = 'LOOKOUT_CROSSING_APPROACH_ROAD';
+    road.position.y = 0.02;
+    root.add(road);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.13, 7.2), deckMaterial);
+    deck.name = 'LOOKOUT_CROSSING_DECK';
+    deck.position.y = 0.085;
+    root.add(deck);
+    const laneMaterial = new THREE.MeshBasicMaterial({ color: '#e7c946', toneMapped: false });
+    for (const side of [-1, 1]) {
+      const laneMark = new THREE.Mesh(new THREE.BoxGeometry(37, 0.018, 0.11), laneMaterial);
+      laneMark.name = 'LOOKOUT_CROSSING_ROAD_CENTERLINE';
+      laneMark.position.set(side * 23.5, 0.075, 0);
+      root.add(laneMark);
     }
+
+    const poleMaterial = new THREE.MeshStandardMaterial({ color: '#e8eceb', roughness: 0.72, metalness: 0.2 });
+    const redMaterial = new THREE.MeshBasicMaterial({ color: '#d93b35', toneMapped: false });
+    const whiteMaterial = new THREE.MeshBasicMaterial({ color: '#f2f2e9', toneMapped: false });
+    const addCrossbuck = (x, z) => {
+      const sign = new THREE.Group();
+      sign.name = 'LOOKOUT_CROSSING_CROSSBUCK';
+      sign.position.set(x, 0, z);
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.8, 10), poleMaterial);
+      post.position.y = 1.4;
+      sign.add(post);
+      for (const rotation of [-0.56, 0.56]) {
+        const board = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.16, 0.08), whiteMaterial);
+        board.position.y = 2.55;
+        board.rotation.z = rotation;
+        sign.add(board);
+      }
+      root.add(sign);
+    };
+    addCrossbuck(-8.2, 4.25);
+    addCrossbuck(8.2, -4.25);
+
+    const addBarrier = (x, z, direction, raised) => {
+      const assembly = new THREE.Group();
+      assembly.name = raised ? 'LOOKOUT_CROSSING_BARRIER_RAISED' : 'LOOKOUT_CROSSING_BARRIER_LOWERED';
+      assembly.position.set(x, 0, z);
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1.25, 0.28), poleMaterial);
+      post.position.y = 0.625;
+      assembly.add(post);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), redMaterial);
+      lamp.position.y = 1.28;
+      assembly.add(lamp);
+      const pivot = new THREE.Group();
+      pivot.position.y = 1.15;
+      if (raised) pivot.rotation.x = -direction * 1.08;
+      const boomLength = 5.7;
+      const boom = new THREE.Mesh(new THREE.BoxGeometry(.16,.14,boomLength),whiteMaterial);
+      boom.position.z = direction * boomLength * .5;
+      pivot.add(boom);
+      for (let index = 0; index < 5; index += 1) {
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(.168,.145,.58),redMaterial);
+        stripe.position.z = direction * (.58 + index * 1.16);
+        pivot.add(stripe);
+      }
+      assembly.add(pivot);
+      root.add(assembly);
+    };
+    // 两侧栏杆分别从道路外侧向车道中心展开，不再同向穿出路面。
+    addBarrier(-5.8, 3.45, -1, intrusion);
+    addBarrier(5.8, -3.45, 1, intrusion);
+  }
+
+  buildCrossing(config, prefabData, repairAssetData, intrusion = false) {
+    const name = intrusion ? 'LOOKOUT_INTRUSION_CROSSING' : 'LOOKOUT_NORMAL_CROSSING';
+    // 原道口预制组合中已含道路、轨道和零散构件，与连续教学线路叠加后
+    // 会出现双重路面和方向错位。本场景只保留独立、轨向对齐的道口组合。
+    const root = new THREE.Group();
+    root.name = name;
+    this.placeLookoutObject3D(root, config.hazardDistance);
+    this.buildCrossingInfrastructure(root, intrusion);
+    this.lookoutRoot.add(root);
     if (intrusion) {
       const hazard = new THREE.Group();hazard.name='LOOKOUT_INTRUSION_ACTORS';
-      const vehicle = new THREE.Mesh(new THREE.BoxGeometry(5.1,1.9,2.05),new THREE.MeshStandardMaterial({color:'#f09a28',roughness:.42,metalness:.16,emissive:'#4b2404',emissiveIntensity:.22}));
-      vehicle.position.set(-.65,1.16,.15);hazard.add(vehicle);
-      const cab = new THREE.Mesh(new THREE.BoxGeometry(1.7,1.05,2.0),new THREE.MeshStandardMaterial({color:'#ffd05b',roughness:.46,metalness:.12}));
-      cab.position.set(1.05,2.18,.15);hazard.add(cab);
-      for(const x of [-2.1,1.05])for(const z of [-.76,.76]){const wheel=new THREE.Mesh(new THREE.CylinderGeometry(.42,.42,.22,14),new THREE.MeshStandardMaterial({color:'#171a1c',roughness:.9}));wheel.rotation.z=Math.PI/2;wheel.position.set(x,.43,z);hazard.add(wheel);}
+      const vehicle = this.createSourceShapeObject(repairAssetData, 'Car1.s', 'LOOKOUT_SOURCE_SEDAN');
+      if (!vehicle) throw new Error('原游戏轿车模型数据无效。');
+      vehicle.rotation.y = Math.PI / 2;
+      vehicle.position.set(-24, 0.16, 0.12);
+      hazard.add(vehicle);
       const person = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.CapsuleGeometry(.26,.85,5,10),new THREE.MeshStandardMaterial({color:'#d9363e',roughness:.75}));body.position.y=1.05;person.add(body);
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(.26,.85,5,10),new THREE.MeshStandardMaterial({color:'#334c62',roughness:.78}));body.position.y=1.05;person.add(body);
       const head = new THREE.Mesh(new THREE.SphereGeometry(.22,12,10),new THREE.MeshStandardMaterial({color:'#d5a27f',roughness:.8}));head.position.y=1.78;person.add(head);person.position.set(1.8,0,-.5);hazard.add(person);
-      root.add(hazard);this.lookoutVisuals.intrusionActors=hazard;
+      root.add(hazard);
+      this.lookoutVisuals.intrusionActors=hazard;
+      this.lookoutVisuals.intrusionVehicle=vehicle;
+      this.intrusionVehicleMotionStart=null;
     }
-    this.lookoutRoot.add(root);
   }
 
   buildTunnel(config, sceneData) {
-    // 使用原 NEIYI 的直线隧道段和洞门构件，移植到近程直线段；
-    // 这样保留源游戏外观，同时把课堂等待时间控制在数分钟内。
+    // 复用原 NEIYI 隧道洞壁与洞门，但轨道仍使用全区间同一条连续主线，
+    // 避免隧道内再次叠加一套轨道而出现阶梯和接缝。
     const root = new THREE.Group();root.name='LOOKOUT_TUNNEL';this.lookoutRoot.add(root);
-    for (let distance = config.tunnelStartDistance; distance < config.tunnelEndDistance - 20; distance += 100) {
-      const segment = this.createSourceShapeObject(sceneData, 'A1t100mStrtTun.s', `LOOKOUT_SOURCE_TUNNEL_SEGMENT_${distance}`);
+    for (let distance = config.tunnelStartDistance; distance < config.tunnelEndDistance - 1; distance += 100) {
+      const segment = this.createSourceShapeObject(
+        sceneData,
+        'A1t100mStrtTun.s',
+        `LOOKOUT_SOURCE_TUNNEL_SEGMENT_${distance}`,
+        { groupFilter: (_group, _index, material) => material?.name === 'a_tunwall' },
+      );
       if (!segment) break;
-      this.placeLookoutObject(segment, distance);
+      this.placeLookoutObject3D(segment, distance);
       root.add(segment);
     }
     const entrance = this.createSourceShapeObject(sceneData, 'Cn_tunnel2.s', 'LOOKOUT_SOURCE_TUNNEL_ENTRANCE');
-    if (entrance) { this.placeLookoutObject(entrance, config.tunnelStartDistance); root.add(entrance); }
+    if (entrance) { this.placeLookoutObject3D(entrance, config.tunnelStartDistance); root.add(entrance); }
     const exit = this.createSourceShapeObject(sceneData, 'Cn_tunnel2.s', 'LOOKOUT_SOURCE_TUNNEL_EXIT');
-    if (exit) { this.placeLookoutObject(exit, config.tunnelEndDistance); exit.rotateY(Math.PI); root.add(exit); }
-    const anomaly=new THREE.Group();anomaly.name='LOOKOUT_TUNNEL_CLEARANCE_ANOMALY';
-    const warningMaterial=new THREE.MeshStandardMaterial({color:'#928b7b',roughness:.76,metalness:.18,emissive:'#2e281d',emissiveIntensity:.42});
-    const upright=new THREE.Mesh(new THREE.BoxGeometry(.68,5.3,.62),warningMaterial);upright.position.set(1.35,2.65,0);
-    const arm=new THREE.Mesh(new THREE.BoxGeometry(3.9,.62,.62),warningMaterial);arm.position.set(-.18,4.75,0);arm.rotation.z=-.16;
-    anomaly.add(upright,arm);
-    const reflectorMaterial=new THREE.MeshBasicMaterial({color:'#ffd85a',toneMapped:false});
-    for(const y of [1.2,2.35,3.5]){
-      const reflector=new THREE.Mesh(new THREE.BoxGeometry(.76,.16,.04),reflectorMaterial);
-      reflector.position.set(1.35,y,-.33);anomaly.add(reflector);
-    }
-    this.placeLookoutObject(anomaly,config.hazardDistance);root.add(anomaly);
-    this.lookoutVisuals.tunnelAnomaly=anomaly;
+    if (exit) { this.placeLookoutObject3D(exit, config.tunnelEndDistance); exit.rotateY(Math.PI); root.add(exit); }
+
+    // 洞外晴天先以一块高亮面形成过曝出口，洞门实体自然把它裁成洞口轮廓。
+    // 靠近并出洞后再逐渐透明，不会成为始终挡在线路前方的白墙。
+    const backlightMaterial=new THREE.MeshBasicMaterial({
+      color:'#fff7dd',transparent:true,opacity:.98,side:THREE.DoubleSide,depthWrite:false,toneMapped:false,
+    });
+    const backlight=new THREE.Mesh(new THREE.PlaneGeometry(15,11.5),backlightMaterial);
+    backlight.name='LOOKOUT_TUNNEL_EXIT_BACKLIGHT';
+    this.placeLookoutObject3D(backlight,config.tunnelEndDistance+34,0,5.25);
+    backlight.renderOrder=2;root.add(backlight);
+    const halo=new THREE.Sprite(new THREE.SpriteMaterial({
+      map:this.createSignalGlowTexture(),color:'#fff1c4',transparent:true,opacity:.72,
+      depthWrite:false,blending:THREE.AdditiveBlending,toneMapped:false,
+    }));
+    halo.name='LOOKOUT_TUNNEL_EXIT_GLARE';
+    this.placeLookoutObject3D(halo,config.tunnelEndDistance+32,0,5.1);
+    halo.scale.set(15.5,11.8,1);halo.renderOrder=3;root.add(halo);
+
+    // 塌方实体放在洞口外，位于高亮天光之前。暗色岩体遮挡下部和右侧
+    // 亮光，学生看到的是洞外剪影造成的不规则轮廓，而不是洞内彩色提示。
+    const collapse=new THREE.Group();collapse.name='LOOKOUT_TUNNEL_EXIT_COLLAPSE';
+    const rockMaterial=new THREE.MeshBasicMaterial({color:'#17140f',toneMapped:false});
+    const rockLayout=[
+      [3.25,2.55,.15,2.15,3.05,1.55,-.16],
+      [1.65,1.45,-.1,2.05,1.8,1.55,.14],
+      [.15,.75,.12,1.7,.92,1.35,-.08],
+      [-1.75,.42,-.18,1.28,.62,1.08,.2],
+      [-3.15,.3,.18,.8,.48,.86,-.12],
+    ];
+    rockLayout.forEach(([x,y,z,sx,sy,sz,rz],index)=>{
+      const rock=new THREE.Mesh(new THREE.DodecahedronGeometry(1,1),rockMaterial);
+      rock.name=`LOOKOUT_TUNNEL_EXIT_ROCK_${index+1}`;
+      rock.position.set(x,y,z);rock.scale.set(sx,sy,sz);rock.rotation.set(.08,index*.17,rz);collapse.add(rock);
+    });
+    this.placeLookoutObject3D(collapse,config.hazardDistance);
+    root.add(collapse);
+    this.lookoutVisuals.tunnelAnomaly=collapse;
+    this.lookoutVisuals.tunnelExitBacklight=backlight;
+    this.lookoutVisuals.tunnelExitGlare=halo;
   }
 
   buildLookoutContinuationTrack(startDistance, endDistance) {
@@ -1016,34 +1423,60 @@ export class MstsRouteScene {
       const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setIndex(indices);geometry.computeBoundingSphere();
       const mesh=new THREE.Mesh(geometry,material);mesh.name=name;mesh.renderOrder=4;mesh.frustumCulled=false;root.add(mesh);
     };
-    // 危险点前后各留出明显断口，仅表现光带中断，不改变钢轨碰撞或车辆运行。
-    buildSection(config.glintStartDistance,config.hazardDistance-38,'LOOKOUT_GLINT_BEFORE_BREAK');
-    buildSection(config.hazardDistance+38,config.glintEndDistance,'LOOKOUT_GLINT_AFTER_BREAK');
+    // 反光边界与危险边界重合；异常点后持续暗哑，不再在危险点前预先断开。
+    buildSection(config.glintStartDistance,config.hazardDistance,'LOOKOUT_GLINT_BEFORE_BREAK');
+    buildSection(config.glintBreakEndDistance,config.glintEndDistance,'LOOKOUT_GLINT_AFTER_BREAK');
     this.lookoutRoot.add(root);this.lookoutVisuals.railGlint=root;
   }
 
-  buildLookoutTrainingScenery(sceneData) {
+  buildLookoutTrainingScenery(sceneData, prefabData, repairAssetData) {
     this.lookoutRoot=new THREE.Group();this.lookoutRoot.name='LOOKOUT_TRAINING_SCENERY';this.routeRoot.add(this.lookoutRoot);
-    const [normal,tunnel,rail,intrusion]=LOOKOUT_TRAINING_CONFIG.events;
-    this.buildCrossing(normal,false);this.buildTunnel(tunnel,sceneData);this.buildCrossing(intrusion,true);
+    const [normal,tunnel,_rail,intrusion]=LOOKOUT_TRAINING_CONFIG.events;
+    this.buildLookoutCatenaryRepairs(sceneData);
+    this.buildTeachingThroughSignals(repairAssetData);
+    this.buildCrossing(normal,prefabData,repairAssetData,false);
+    this.buildTunnel(tunnel,sceneData);
+    this.buildCrossing(intrusion,prefabData,repairAssetData,true);
   }
 
   updateLookoutTraining(attempt, distance) {
     if(!this.lookoutRoot)return;
     const tunnel=LOOKOUT_TRAINING_CONFIG.events.find((item)=>item.visualKind==='tunnel');
     const insideTunnel=distance>=tunnel.tunnelStartDistance&&distance<=tunnel.tunnelEndDistance;
-    this.renderer.toneMappingExposure=insideTunnel ? .58 : 1.05;
-    if(insideTunnel){this.scene.background.set('#171c1f');this.scene.fog.color.set('#171c1f');this.scene.fog.near=55;this.scene.fog.far=520;}
-    else this.scene.fog.color.set('#a7b9c2');
+    this.renderer.toneMappingExposure=insideTunnel ? .46 : 1.05;
+    // 洞内依靠实体洞壁和较低曝光形成黑暗；高亮面不参与色调映射，
+    // 因而保持近乎白色的出口光斑，形成洞内外高反差。
+    if(insideTunnel){this.scene.background.set('#a7bdca');this.scene.fog.color.set('#a7b9c2');this.scene.fog.near=500;this.scene.fog.far=1600;}
+    else {this.scene.background.set(this.scenarioId==='weather'?'#83929a':'#a7bdca');this.scene.fog.color.set(this.scenarioId==='weather'?'#83929a':'#a7b9c2');this.scene.fog.near=500;this.scene.fog.far=1600;}
     const tunnelEvent=attempt?.events?.['tunnel-hazard'];
     if(this.lookoutVisuals.tunnelAnomaly)this.lookoutVisuals.tunnelAnomaly.visible=!tunnelEvent?.cleared;
-    const intrusionEvent=attempt?.events?.['intrusion-crossing'];
+    const backlight=this.lookoutVisuals.tunnelExitBacklight;
+    const glare=this.lookoutVisuals.tunnelExitGlare;
+    if(backlight&&glare){
+      const exitFade=1-THREE.MathUtils.smoothstep(distance,tunnel.tunnelEndDistance-2,tunnel.tunnelEndDistance+22);
+      backlight.material.opacity=.98*exitFade;
+      glare.material.opacity=.72*exitFade;
+      backlight.visible=exitFade>.015;
+      glare.visible=exitFade>.015;
+    }
     const actors=this.lookoutVisuals.intrusionActors;
     if(actors){
       const config=LOOKOUT_TRAINING_CONFIG.events.find((item)=>item.id==='intrusion-crossing');
-      const escape=intrusionEvent?.stoppedBeforeHazard?0:THREE.MathUtils.smoothstep(distance,config.hazardDistance-28,config.passDistance);
-      actors.position.set(escape*9,0,0);
-      actors.visible=!intrusionEvent?.cleared||distance<config.passDistance;
+      const vehicle=this.lookoutVisuals.intrusionVehicle;
+      const active=distance>=config.revealDistance-120&&distance<=config.passDistance+110;
+      actors.visible=active;
+      if(active&&vehicle){
+        const now=performance.now()/1000;
+        const cycleSeconds=8.5;
+        // 首次进入观察区时车辆已接近道口，之后按真实时间循环横穿。
+        // 动画不使用列车里程，因此学生停车后轿车仍会继续从左向右运动。
+        if(this.intrusionVehicleMotionStart==null)this.intrusionVehicleMotionStart=now-cycleSeconds*.42;
+        const phase=((now-this.intrusionVehicleMotionStart)%cycleSeconds)/cycleSeconds;
+        vehicle.position.x=THREE.MathUtils.lerp(-24,24,phase);
+      }else if(distance<config.revealDistance-120){
+        this.intrusionVehicleMotionStart=null;
+        if(vehicle)vehicle.position.x=-24;
+      }
     }
   }
 
@@ -1068,6 +1501,7 @@ export class MstsRouteScene {
       }
     }
     this.scene.background.set(weather ? '#83929a' : '#a7bdca');
+    this.scene.fog.color.set(weather ? '#83929a' : '#a7b9c2');
     this.scene.fog.near = near;
     this.scene.fog.far = far;
     if (Math.abs(this.signalLampVisibility - lampVisibility) > 0.01) {

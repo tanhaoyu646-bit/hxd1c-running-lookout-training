@@ -4,6 +4,7 @@ import { writeFile } from 'node:fs/promises';
 const port = Number(process.env.CDP_PORT || 9224);
 const url = process.env.TRAINING_URL || 'http://127.0.0.1:4175/smooth-start/?debug=1';
 const screenshotPath = process.env.SCREENSHOT_PATH || `${process.env.TEMP || '.'}/smooth-start-mobile-controls.png`;
+const expectedProcedureItems = Number(process.env.EXPECTED_PROCEDURE_ITEMS || 8);
 const pages = await fetch(`http://127.0.0.1:${port}/json`).then((response) => response.json());
 const page = pages.find((entry) => entry.type === 'page');
 assert(page, '没有可用的浏览器页面');
@@ -39,11 +40,11 @@ await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints
 await send('Page.navigate', { url });
 await evaluate(`new Promise((resolve, reject) => {
   const started=Date.now();const timer=setInterval(()=>{
-    if(document.querySelector('.route-scene.live')&&document.querySelectorAll('#procedure li').length===8){clearInterval(timer);resolve(true);}
+    if(document.querySelector('.route-scene.live')&&document.querySelectorAll('#procedure li').length===${expectedProcedureItems}){clearInterval(timer);resolve(true);}
     else if(Date.now()-started>30000){clearInterval(timer);reject(new Error('专项页面初始化超时'));}
   },100);
 })`, true);
-await evaluate(`document.querySelector('#enter-training').click();document.querySelector('[data-terrain="uphill"]').click();true`);
+await evaluate(`document.querySelector('#enter-training').click();document.querySelector('[data-terrain="uphill"]')?.click();true`);
 await new Promise((resolve) => setTimeout(resolve, 350));
 
 const result = await evaluate(`(() => {
@@ -60,11 +61,12 @@ const result = await evaluate(`(() => {
   const badge=document.querySelector('[data-position-id="independent"]');const br=rect(badge);const badgeRect=badge.getBoundingClientRect();
   const badgeAvoidsParking=parking.every((button)=>!overlap(br,button));
   const badgeOwnsHitArea=badge.contains(document.elementFromPoint(badgeRect.left+badgeRect.width/2,badgeRect.top+badgeRect.height*.85));
+  const parkingBeforeIndependentDrag=window.__trainingSim.state.parkingBrake;
   badge.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:17,clientX:badgeRect.left+badgeRect.width/2,clientY:badgeRect.top+badgeRect.height*.7}));
   window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:17,clientX:badgeRect.left+badgeRect.width/2,clientY:badgeRect.top-18}));
   window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:17,clientX:badgeRect.left+badgeRect.width/2,clientY:badgeRect.top-18}));
   const independentDragChanged=!document.querySelector('[data-position-id="independent"] span').textContent.includes('制动Ⅱ');
-  const parkingStillApplied=document.querySelector('#status').innerText.includes('停放制动 施加');
+  const parkingStillApplied=window.__trainingSim.state.parkingBrake===parkingBeforeIndependentDrag;
   document.querySelector('.parking-release').click();
   const tractionBadge=document.querySelector('[data-position-id="traction"]');const tractionRect=tractionBadge.getBoundingClientRect();
   const tractionBadgeOwnsHitArea=tractionBadge.contains(document.elementFromPoint(tractionRect.left+tractionRect.width/2,tractionRect.top+tractionRect.height/2));
@@ -72,7 +74,7 @@ const result = await evaluate(`(() => {
   window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:18,clientX:tractionRect.left+tractionRect.width/2,clientY:tractionRect.top+tractionRect.height*.7-22}));
   window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:18,clientX:tractionRect.left+tractionRect.width/2,clientY:tractionRect.top+tractionRect.height*.7-22}));
   const tractionDragChanged=document.querySelector('[data-position-id="traction"] span').textContent.includes('牵引 1.0 级');
-  const parkingReleased=document.querySelector('#status').innerText.includes('停放制动 缓解');
+  const parkingReleased=!window.__trainingSim.state.parkingBrake;
   const tractionReturnRect=tractionBadge.getBoundingClientRect();
   tractionBadge.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:19,clientX:tractionReturnRect.left+tractionReturnRect.width/2,clientY:tractionReturnRect.top+tractionReturnRect.height*.4}));
   window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:19,clientX:tractionReturnRect.left+tractionReturnRect.width/2,clientY:tractionReturnRect.top+tractionReturnRect.height*.4+22}));

@@ -14,7 +14,25 @@ const resolvePrevious = (state, id) => {
 
 assert(LOOKOUT_TRAINING_CONFIG.continuityEndDistance < eventConfig('normal-crossing').revealDistance);
 assert(eventConfig('normal-crossing').hazardDistance <= 2500, '首个道口必须在正常运行数分钟内出现');
-assert(eventConfig('tunnel-hazard').tunnelStartDistance <= 3000, '隧道入口不得放置在长时间空驶区间');
+assert(
+  eventConfig('tunnel-hazard').tunnelStartDistance - eventConfig('normal-crossing').hazardDistance <= 1100,
+  '正常道口后约1 km应进入隧道',
+);
+assert(
+  eventConfig('tunnel-hazard').hazardDistance > eventConfig('tunnel-hazard').tunnelEndDistance,
+  '塌方必须位于隧道出口外，不得放在洞内',
+);
+assert.equal(
+  eventConfig('rail-glint-break').hazardDistance - eventConfig('rail-glint-break').revealDistance,
+  400,
+  '钢轨反光中断应从400 m外进入观察范围',
+);
+assert.equal(
+  eventConfig('rail-glint-break').glintBreakEndDistance - eventConfig('rail-glint-break').hazardDistance,
+  180,
+  '钢轨暗哑段应向危险点后延伸180 m',
+);
+assert.equal(LOOKOUT_TRAINING_CONFIG.throughSignals.length,5,'压缩线路应保留5架通过信号机');
 assert(LOOKOUT_TRAINING_CONFIG.finishDistance <= 6500, '课堂考核线路不应保留原30 km空驶长度');
 
 {

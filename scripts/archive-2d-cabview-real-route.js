@@ -1,6 +1,6 @@
 import { TrainSimulation } from './dynamics.js?rev=notch-timing-v30';
 import { getProcedure, procedureState, scoreRun } from './procedure.js?rev=notch-timing-v30';
-import { MstsRouteScene } from './mstsRouteScene.js?rev=lookout-terrain-v2';
+import { MstsRouteScene } from './mstsRouteScene.js?rev=lookout-baseline-v3';
 import { LKJ_FIELD_DEFINITIONS, LKJ_TRAINING_PARAMETERS, RUNNING_NOTICES, SIGNAL_ASPECTS, TRAIN_DYNAMICS, SMOOTH_START_TERRAINS, getSmoothStartTerrain } from './scenario.js?rev=notch-timing-v30';
 import { SCENARIOS, ROUTE_CONTEXT, getScenario, scenarioAudioPath } from './credentialScenario.js?rev=smooth-start-v19-cir-incoming-clickfix';
 import { ROUTE_TRAINING_PROFILE } from './routeTrainingProfile.js';
@@ -38,7 +38,7 @@ if (TRAINING_APP === 'lookout') {
 const lookoutAssessment = TRAINING_APP === 'lookout' ? new LookoutAssessment(sim.state) : null;
 const overlay = $('#overlay');
 const routeCanvas = $('#route-scene');
-const routeScene = new MstsRouteScene(routeCanvas);
+const routeScene = new MstsRouteScene(routeCanvas, { profile: TRAINING_APP });
 // 冷启动时首次 render 早于异步路线加载完成；ready 后必须重新同步画布与信号标注。
 routeCanvas.addEventListener('route-ready',()=>render(sim.state));
 routeCanvas.addEventListener('route-error',(event)=>{

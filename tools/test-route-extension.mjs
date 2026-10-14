@@ -5,6 +5,8 @@ import { buildRailAlignedPath, cumulativePathDistances } from '../scripts/railAl
 const scene = JSON.parse(await readFile('assets/msts-neiyi-corridor/neiyi-neijiang-neijiangnan-scene.json', 'utf8'));
 const path = JSON.parse(await readFile('assets/msts-neiyi/neiyi-5635-trackdb-path.json', 'utf8'));
 const terrain = JSON.parse(await readFile('assets/msts-neiyi-corridor/neiyi-lookout-terrain.json', 'utf8'));
+const nativeTerrain = JSON.parse(await readFile('assets/msts-neiyi-corridor/neiyi-lookout-terrain-native.json', 'utf8'));
+const sourcePrefabs = JSON.parse(await readFile('assets/msts-neiyi-corridor/lookout-source-prefabs.json', 'utf8'));
 const routeSceneSource = await readFile('scripts/mstsRouteScene.js', 'utf8');
 const points = Array.from(
   { length: Math.floor(path.positions.length / 3) },
@@ -23,8 +25,15 @@ assert.equal(terrain.summary.tileCount, 8, '近程考核走廊必须加载8个�
 assert.equal(terrain.summary.resolution, 65);
 assert(terrain.tiles.every((tile) => tile.heights.length === 65 * 65));
 assert(terrain.tiles.some((tile) => Math.max(...tile.heights) - Math.min(...tile.heights) > 50), '地形高程不能退化为平面');
+assert.equal(nativeTerrain.summary.tileCount, 8, '瞭望基线必须保留8个原线路地形瓦片');
+assert.equal(nativeTerrain.summary.resolution, 257, '瞭望基线必须使用8 m原生高程采样');
+assert(nativeTerrain.tiles.every((tile) => tile.heights.length === 257 * 257));
+assert.equal(sourcePrefabs.crossing.instances.length, 7, '原线路道口预制体应保留道口、道口柱和相接道路');
+assert.equal(sourcePrefabs.source.worldTile, 'w-005723+014705.w');
 assert.match(routeSceneSource, /MSTS_SOURCE_TERRAIN/);
 assert.match(routeSceneSource, /A1t100mStrtTun\.s/);
+assert.match(routeSceneSource, /limitTerrainAtRailway/);
+assert.match(routeSceneSource, /LOOKOUT_ROUTE_RENDER_OPTIONS/);
 
 const alignedPoints = buildRailAlignedPath(path.positions, scene.instances, { spacing: 5 });
 const alignedDistances = cumulativePathDistances(alignedPoints);

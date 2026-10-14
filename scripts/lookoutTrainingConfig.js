@@ -11,6 +11,17 @@ export const LOOKOUT_TRAINING_CONFIG = Object.freeze({
   // 课堂考核压缩站间运行距离：贯通试验完成后约 0.5 km 出现首个道口，
   // 正常运行约 3 分钟即可接近隧道，避免长时间空驶。
   continuityEndDistance: 1750,
+  // 6 km压缩线路中设置5架通过信号机。均显示绿灯，仅作途中瞭望对象，
+  // 不改变道口、隧道和钢轨反光异常的评分规则。
+  throughSignals: Object.freeze([
+    Object.freeze({ id: '2328', distance: 1800 }),
+    Object.freeze({ id: '2316', distance: 2800 }),
+    Object.freeze({ id: '2302', distance: 3800 }),
+    Object.freeze({ id: '2288', distance: 4800 }),
+    Object.freeze({ id: '2274', distance: 5800 }),
+  ]),
+  // 保留单架字段供旧的截图与调试脚本使用。
+  throughSignalDistance: 1800,
   finishDistance: 6000,
   eventOrder: Object.freeze([
     LOOKOUT_EVENT_IDS.NORMAL_CROSSING,
@@ -34,12 +45,13 @@ export const LOOKOUT_TRAINING_CONFIG = Object.freeze({
       label: '隧道出口轮廓异常',
       kind: 'emergency',
       visualKind: 'tunnel',
-      // 使用原 NEIYI 隧道构件移植到近程直线段，保留原模型但缩短课堂等待时间。
-      tunnelStartDistance: 2800,
-      tunnelEndDistance: 3400,
-      revealDistance: 2700,
-      hazardDistance: 3330,
-      passDistance: 3380,
+      // 使用原 NEIYI 的100 m直线隧道轨道段和洞门，以完整三维姿态贴合近程线路。
+      tunnelStartDistance: 3200,
+      tunnelEndDistance: 3500,
+      revealDistance: 3050,
+      // 塌方位于出口外20 m；学生在洞内通过强光洞口轮廓的缺口预判。
+      hazardDistance: 3520,
+      passDistance: 3570,
       requiredHornCount: 1,
       weight: 25,
     }),
@@ -48,11 +60,15 @@ export const LOOKOUT_TRAINING_CONFIG = Object.freeze({
       label: '钢轨光带中断',
       kind: 'emergency',
       visualKind: 'rail',
-      glintStartDistance: 3900,
-      revealDistance: 4100,
-      hazardDistance: 4500,
-      passDistance: 4550,
-      glintEndDistance: 4800,
+      // 3.85–4.10 km是本压缩走廊的长直线段，边界放在直线末端，
+      // 避免原4.5 km曲线遮挡导致学生只能在近距离看见异常。
+      glintStartDistance: 3600,
+      revealDistance: 3700,
+      hazardDistance: 4100,
+      passDistance: 4150,
+      // 反光在危险边界处突然中断，后续180 m保持暗哑，便于从400 m外预判。
+      glintBreakEndDistance: 4280,
+      glintEndDistance: 4400,
       requiredHornCount: 1,
       weight: 25,
     }),

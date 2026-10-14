@@ -24,7 +24,7 @@
 | 现象 | 根因 | 修正 |
 | --- | --- | --- |
 | 树木、楼房纹理倒置 | MSTS UV 已按原坐标导出，Three.js 又默认翻转图像 | 设置 `texture.flipY = false` |
-| 钢轨断缝、后段缺失 | 世界块导出只覆盖前半段，MSTS 分节模型还存在 Web 接缝 | 扩展全程世界块，并用同一 TrackDB 中心线生成连续轨面、钢轨及反光带 |
+| 钢轨断缝、后段缺失 | 世界块导出只覆盖前半段，MSTS 分节主线轨道在 WebGL 中仍有接缝和重叠 | 扩展世界块，保留原场景侧线；本务运行线按同一 TrackDB 中心线生成有宽度和高度的连续实体钢轨头与三维轨枕，不使用平面亮条 |
 | 驾驶视点离开钢轨 | MSTS 的铁路和公路均被导出为 `TrackObj`，公路方向被误当成轨道切线 | 中心线对齐仅接受 `A1t/A2t/A3t` 系列铁路构件 |
 | 无真实隧道 | 原导出范围未覆盖隧道世界块 | 直接引入原游戏 `Cn_tunnel*`、`JP1tunnel1t`和隧道轨道模型；教学层只叠加净空轮廓异常 |
 | 信号机像临时模型 | 第一闭塞信号机由几何体临时搭建 | 使用原游戏 `SignalObj` 杆体与姿态，灯位来自 `NEIYI/sigcfg.dat` |
@@ -35,18 +35,20 @@
 
 - 1.75 km：结束贯通试验阶段。
 - 2.20 km：正常道口。
-- 2.80–3.40 km：由原NEIYI隧道构件搭建的教学隧道，3.33 km设置轮廓异常。
+- 3.20–3.50 km：由3段100 m原NEIYI直线隧道轨道段和原洞门搭建短隧道，3.39 km设置轮廓异常。
 - 4.50 km：钢轨反光带中断，连续钢轨本体不切断。
 - 5.60 km：人员/车辆侵限道口。
 - 6.00 km：完成全部场景后结算。
 
 ## 地形来源
 
-- 从原线路 `TILES` 中读取8个近程世界块的65×65高程网格。
+- 原65×65导出文件保留作为回归基线；瞭望项目单独使用同8个近程世界块的257×257高程网格（8 m原生采样）。
 - 高程由Open Rails的 `TerrainFile` 和 `TerrainAltitudeFile` 解析，并转换到与轨道、建筑相同的原点坐标。
 - 地表使用原线路 `TERRTEX/terrain.ace` 与 `microtex.ace` 转换纹理。
 - 原始 `.t`、`_y.raw` 文件路径及SHA-256写入 `neiyi-lookout-terrain.json`，原游戏文件保持只读。
-- 地形JSON SHA-256：`6CDB325F1B83996F4A7AF56B2F6D49F32F3FFCD451105490DC7B19CBA0EE7E2D`。
+- 瞭望原生地形：`assets/msts-neiyi-corridor/neiyi-lookout-terrain-native.json`。
+- 瞭望原生地形 SHA-256：`1A98DAC2056ECEBD21956087CB4E145F0D69AA0187324E6EE862F8AAC9F68093`。
+- 原道口预制体：`assets/msts-neiyi-corridor/lookout-source-prefabs.json`，SHA-256：`CFC22028523BD650A7119878B3D490659C54253288A07F39F369463E2BA673CC`。
 
 ## 已弃用的首轮长距离布置
 
