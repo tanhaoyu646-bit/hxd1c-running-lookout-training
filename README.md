@@ -2,6 +2,11 @@
 
 本仓库由验收后的“平稳起车与贯通试验”项目完整复制后独立建立。原项目不在本仓库内，当前修改不会写回原项目。
 
+## 在线体验
+
+- 途中瞭望训练：[打开 GitHub Pages](https://tanhaoyu646-bit.github.io/hxd1c-running-lookout-training/lookout-training/)
+- 手机端建议横屏使用；页面已适配安全区、触控手柄、步骤面板和视角切换。
+
 ## 主考核入口
 
 - `/lookout-training/`：途中瞭望技巧综合考评。
