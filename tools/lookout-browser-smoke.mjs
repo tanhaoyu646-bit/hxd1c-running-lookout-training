@@ -47,7 +47,7 @@ await send('Page.navigate',{url});
 await evaluate(`new Promise((resolve,reject)=>{const started=Date.now();const timer=setInterval(()=>{if(window.__routeScene?.ready&&document.querySelector('.route-scene.live')&&document.querySelectorAll('#procedure li').length===6){clearInterval(timer);resolve(true);}else if(Date.now()-started>30000){clearInterval(timer);reject(new Error('途中瞭望页面初始化超时'));}},100);})`,true);
 if(mobile){await evaluate(`document.querySelector('#enter-training').click();true`);await new Promise((resolve)=>setTimeout(resolve,240));}
 const summary = await evaluate(`(()=>{
-  const names=[];const materialNames=[];const continuousRailMaterials=new Set();let sourceTrackMeshes=0;let reflectiveRailMaterials=0;let maximumSignalScale=0;
+  const names=[];const materialNames=[];const continuousRailMaterials=new Set();let polishedRailColor='';let polishedRailEmissive='';let polishedRailEmissiveIntensity=-1;let sourceTrackMeshes=0;let reflectiveRailMaterials=0;let maximumSignalScale=0;
   window.__routeScene.routeRoot.traverse((object)=>{
     if(object.name)names.push(object.name);
     if(object.material?.name)materialNames.push(object.material.name);
@@ -55,6 +55,11 @@ const summary = await evaluate(`(()=>{
     if(/rail[_ ]?tops?/i.test(object.material?.name||''))reflectiveRailMaterials+=1;
     if(/SOURCE_.*SIGNAL.*_VISUAL/.test(object.name||''))maximumSignalScale=Math.max(maximumSignalScale,object.scale.x);
     if(/^LOOKOUT_RAIL_/.test(object.name||'')&&object.material)continuousRailMaterials.add(object.material);
+    if(object.material?.name==='LOOKOUT_POLISHED_RAIL_STEEL'){
+      polishedRailColor=object.material.color.getHexString();
+      polishedRailEmissive=object.material.emissive.getHexString();
+      polishedRailEmissiveIntensity=object.material.emissiveIntensity;
+    }
   });
   return {
     title:document.title,
@@ -81,6 +86,10 @@ const summary = await evaluate(`(()=>{
     railVisibilityDistanceLimited:Boolean(window.__routeScene.routeRoot.getObjectByName('LOOKOUT_MAINLINE_RAIL_VISIBILITY_LOD')?.userData.distanceLimited),
     railVisibilityUsesFog:window.__routeScene.railVisibilityMaterials.some((material)=>Object.hasOwn(material.uniforms,'fogFar')),
     continuousRailFogEnabled:[...continuousRailMaterials].some((material)=>material.fog!==false),
+    polishedRailColor,
+    polishedRailEmissive,
+    polishedRailEmissiveIntensity,
+    distantRailColor:window.__routeScene.railVisibilityMaterials[0]?.uniforms.railColor.value.getHexString()||'',
     continuousSleepers:names.filter((name)=>name==='LOOKOUT_CONTINUOUS_SLEEPERS').length,
     catenaryRepairs:window.__routeScene.routeRoot.getObjectByName('LOOKOUT_REALIGNED_CATENARY_MASTS')?.children.length||0,
     throughSignalPresent:Boolean(window.__routeScene.routeRoot.getObjectByName('TEACHING_2328_THROUGH_SIGNAL')),
@@ -114,6 +123,10 @@ assert(summary.railVisibilityLodEnd>=summary.pathLength-1,'主线远景钢轨可
 assert.equal(summary.railVisibilityDistanceLimited,false,'远景钢轨仍存在人为距离限制');
 assert.equal(summary.railVisibilityUsesFog,false,'远景钢轨仍按场景雾距淡出');
 assert.equal(summary.continuousRailFogEnabled,false,'连续实体钢轨仍受场景雾效隐藏');
+assert.equal(summary.polishedRailColor,'69757a','近景轨头未使用中深灰钢材本色');
+assert.equal(summary.distantRailColor,summary.polishedRailColor,'远景轨头颜色与近景钢材不一致');
+assert.equal(summary.polishedRailEmissive,'000000','正常轨头仍带有白色或蓝色自发光');
+assert.equal(summary.polishedRailEmissiveIntensity,0,'正常轨头自发光强度未关闭');
 for(const name of ['LOOKOUT_NORMAL_CROSSING','LOOKOUT_TUNNEL','LOOKOUT_TUNNEL_EXIT_BACKLIGHT','LOOKOUT_TUNNEL_EXIT_GLARE','LOOKOUT_TUNNEL_EXIT_COLLAPSE','LOOKOUT_TUNNEL_EXIT_ROCK_1','LOOKOUT_INTRUSION_CROSSING','LOOKOUT_INTRUSION_ACTORS','LOOKOUT_SOURCE_SEDAN','LOOKOUT_CROSSING_APPROACH_ROAD','LOOKOUT_RAIL_LEFT_GLINT_BREAK'])assert(summary.sceneNames.includes(name),`缺少三维对象 ${name}`);
 assert(summary.sceneNames.includes('LOOKOUT_SOURCE_SEDAN'),'侵限道口未使用原游戏轿车模型');
 assert.equal(summary.throughSignalPresent,true,'未生成原游戏通过信号机');
