@@ -40,12 +40,18 @@ assert.match(
   '瞭望项目的连续本务主线不得在6 km考核终点附近截断',
 );
 assert.match(routeSceneSource, /LOOKOUT_MAINLINE_RAIL_VISIBILITY_LOD/, '缺少主线远景钢轨可见LOD');
-assert.match(routeSceneSource, /nearFadeStart:\s*\{\s*value:\s*150\s*\}/, '远景LOD不得替代近景实体钢轨');
+assert.match(routeSceneSource, /onePixelDistance[\s\S]*?0\.15 \* viewportHeight/, '远景LOD未按原0.15 m轨顶的屏幕投影动态接管');
+assert.match(routeSceneSource, /onePixelRailDistance[\s\S]*?0\.15 \* height/, '窗口缩放后未重新计算钢轨投影阈值');
 assert.match(routeSceneSource, /this\.camera\.far = Math\.max\(50_000, Math\.ceil\(this\.pathLength \+ 1_000\)\)/, '相机远裁剪面未覆盖完整本务线路');
 assert.doesNotMatch(routeSceneSource, /uniform float fogFar/, '远景钢轨不得再按场景雾距淡出');
-assert.equal((routeSceneSource.match(/new THREE\.Color\('#8b969a'\)/g) || []).length, 1, '远景钢轨必须使用与实体轨头一致的原线路中灰钢色');
-assert.match(routeSceneSource, /halfWidthPixels:\s*\{\s*value:\s*1\.12\s*\}/, '远景钢轨未保持稳定的最小屏幕宽度');
-assert.match(routeSceneSource, /emissive:\s*'#000000'[\s\S]*?emissiveIntensity:\s*0/, '实体轨头不得使用白色或蓝色自发光');
+assert.match(routeSceneSource, /polishedMaterial\.color\.set\('#8b969a'\)/, '近景轨顶未使用原线路中灰钢色');
+assert.match(routeSceneSource, /id:\s*'SIDE',[\s\S]*?halfWidthPixels:\s*1\.15[\s\S]*?color:\s*'#394246'/, '远景轨腰轮廓未按原游戏明暗结构建立');
+assert.match(routeSceneSource, /id:\s*'TOP',[\s\S]*?halfWidthPixels:\s*0\.62[\s\S]*?color:\s*'#8b969a'/, '远景轨顶未保持稳定的灰钢色最小宽度');
+assert.match(routeSceneSource, /name:\s*'RailSide'[\s\S]*?texture:\s*'ACleanTrack2\.png'/, '连续轨腰未复用原游戏纹理');
+assert.match(routeSceneSource, /name:\s*'RailTops'[\s\S]*?texture:\s*'ACleanTrack2\.png'/, '连续轨顶未复用原游戏纹理');
+assert.match(routeSceneSource, /halfWidth:\s*0\.075[\s\S]*?baseHeight:\s*0\.2[\s\S]*?railHeight:\s*0\.125/, '连续钢轨截面未恢复原游戏0.15 m轨宽和0.125 m轨腰高度');
+assert.match(routeSceneSource, /repeatLength:\s*5/, '道床纹理未恢复原游戏5 m重复周期');
+assert.match(routeSceneSource, /polishedMaterial\.emissive\.set\('#000000'\)[\s\S]*?emissiveIntensity\s*=\s*0/, '实体轨头不得使用白色或蓝色自发光');
 
 const alignedPoints = buildRailAlignedPath(path.positions, scene.instances, { spacing: 5 });
 const alignedDistances = cumulativePathDistances(alignedPoints);

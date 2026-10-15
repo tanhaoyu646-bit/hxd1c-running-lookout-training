@@ -47,7 +47,7 @@ await send('Page.navigate',{url});
 await evaluate(`new Promise((resolve,reject)=>{const started=Date.now();const timer=setInterval(()=>{if(window.__routeScene?.ready&&document.querySelector('.route-scene.live')&&document.querySelectorAll('#procedure li').length===6){clearInterval(timer);resolve(true);}else if(Date.now()-started>30000){clearInterval(timer);reject(new Error('途中瞭望页面初始化超时'));}},100);})`,true);
 if(mobile){await evaluate(`document.querySelector('#enter-training').click();true`);await new Promise((resolve)=>setTimeout(resolve,240));}
 const summary = await evaluate(`(()=>{
-  const names=[];const materialNames=[];const continuousRailMaterials=new Set();let polishedRailColor='';let polishedRailEmissive='';let polishedRailEmissiveIntensity=-1;let sourceTrackMeshes=0;let reflectiveRailMaterials=0;let maximumSignalScale=0;
+  const names=[];const materialNames=[];const continuousRailMaterials=new Set();let polishedRailColor='';let polishedRailEmissive='';let polishedRailEmissiveIntensity=-1;let polishedRailHasMap=false;let railBodyHasMap=false;let sourceTrackMeshes=0;let reflectiveRailMaterials=0;let maximumSignalScale=0;
   window.__routeScene.routeRoot.traverse((object)=>{
     if(object.name)names.push(object.name);
     if(object.material?.name)materialNames.push(object.material.name);
@@ -59,8 +59,14 @@ const summary = await evaluate(`(()=>{
       polishedRailColor=object.material.color.getHexString();
       polishedRailEmissive=object.material.emissive.getHexString();
       polishedRailEmissiveIntensity=object.material.emissiveIntensity;
+      polishedRailHasMap=Boolean(object.material.map);
     }
+    if(object.material?.name==='LOOKOUT_RAIL_STEEL_BODY')railBodyHasMap=Boolean(object.material.map);
   });
+  const railVisibilityMaterials=window.__routeScene.railVisibilityMaterials;
+  const distantRailTopMaterial=railVisibilityMaterials.find((material)=>material.name==='LOOKOUT_DISTANT_RAIL_TOP_MATERIAL');
+  const distantRailSideMaterial=railVisibilityMaterials.find((material)=>material.name==='LOOKOUT_DISTANT_RAIL_SIDE_MATERIAL');
+  const selectedTrack=window.__routeScene.routeRoot.getObjectByName('SELECTED_ROUTE_TEXTURED_TRACK');
   return {
     title:document.title,
     app:document.body.dataset.trainingApp,
@@ -89,7 +95,14 @@ const summary = await evaluate(`(()=>{
     polishedRailColor,
     polishedRailEmissive,
     polishedRailEmissiveIntensity,
-    distantRailColor:window.__routeScene.railVisibilityMaterials[0]?.uniforms.railColor.value.getHexString()||'',
+    polishedRailHasMap,
+    railBodyHasMap,
+    sourceTrackBedHasMap:Boolean(selectedTrack?.material?.map),
+    sourceTrackBedMaterial:selectedTrack?.material?.name||'',
+    distantRailColor:distantRailTopMaterial?.uniforms.railColor.value.getHexString()||'',
+    distantRailSideColor:distantRailSideMaterial?.uniforms.railColor.value.getHexString()||'',
+    distantRailFadeStart:distantRailTopMaterial?.uniforms.nearFadeStart.value||0,
+    distantRailFadeEnd:distantRailTopMaterial?.uniforms.nearFadeEnd.value||0,
     continuousSleepers:names.filter((name)=>name==='LOOKOUT_CONTINUOUS_SLEEPERS').length,
     catenaryRepairs:window.__routeScene.routeRoot.getObjectByName('LOOKOUT_REALIGNED_CATENARY_MASTS')?.children.length||0,
     throughSignalPresent:Boolean(window.__routeScene.routeRoot.getObjectByName('TEACHING_2328_THROUGH_SIGNAL')),
@@ -127,6 +140,13 @@ assert.equal(summary.polishedRailColor,'8b969a','近景轨头未使用原线路�
 assert.equal(summary.distantRailColor,summary.polishedRailColor,'远景轨头颜色与近景钢材不一致');
 assert.equal(summary.polishedRailEmissive,'000000','正常轨头仍带有白色或蓝色自发光');
 assert.equal(summary.polishedRailEmissiveIntensity,0,'正常轨头自发光强度未关闭');
+assert.equal(summary.polishedRailHasMap,true,'近景轨顶未复用原游戏ACleanTrack2纹理');
+assert.equal(summary.railBodyHasMap,true,'近景轨腰未复用原游戏ACleanTrack2纹理');
+assert.equal(summary.sourceTrackBedHasMap,true,'连续道床未复用原游戏ACleanTrack1纹理');
+assert.equal(summary.sourceTrackBedMaterial,'LOOKOUT_SOURCE_TRACKBED_MATERIAL','连续道床材质不是原线路基线材质');
+assert.equal(summary.distantRailSideColor,'394246','远景轨腰缺少原游戏式暗色轮廓');
+assert(summary.distantRailFadeStart>=40&&summary.distantRailFadeStart<=90,'远景钢轨没有按视口像素提前接管');
+assert(summary.distantRailFadeEnd>=110&&summary.distantRailFadeEnd<=180,'远景钢轨过渡结束距离不符合视口动态范围');
 for(const name of ['LOOKOUT_NORMAL_CROSSING','LOOKOUT_TUNNEL','LOOKOUT_TUNNEL_EXIT_BACKLIGHT','LOOKOUT_TUNNEL_EXIT_GLARE','LOOKOUT_TUNNEL_EXIT_COLLAPSE','LOOKOUT_TUNNEL_EXIT_ROCK_1','LOOKOUT_INTRUSION_CROSSING','LOOKOUT_INTRUSION_ACTORS','LOOKOUT_SOURCE_SEDAN','LOOKOUT_CROSSING_APPROACH_ROAD','LOOKOUT_RAIL_LEFT_GLINT_BREAK'])assert(summary.sceneNames.includes(name),`缺少三维对象 ${name}`);
 assert(summary.sceneNames.includes('LOOKOUT_SOURCE_SEDAN'),'侵限道口未使用原游戏轿车模型');
 assert.equal(summary.throughSignalPresent,true,'未生成原游戏通过信号机');
@@ -137,7 +157,7 @@ assert.equal(summary.terrainCorridorLimited,true,'未建立本线路基限高');
 assert.equal(summary.selectedTrackBeds,1,'未生成连续的原游戏纹理道床');
 assert.equal(summary.continuousRails,8,'贯通钢轨本体及反光中断前、异常段和恢复段的左右轨头未完整生成');
 assert.equal(summary.sceneNames.filter((name)=>name.endsWith('_BODY')).length,2,'左右钢轨本体必须连续贯通全线');
-assert.equal(summary.railVisibilityLodSegments,4,'左右钢轨的远景可见LOD应在反光中断前后分别建立');
+assert.equal(summary.railVisibilityLodSegments,8,'左右钢轨的远景轨腰和轨顶LOD应在反光中断前后分别建立');
 assert(summary.railVisibilityLodRanges.every(([start,end])=>end<=LOOKOUT_TRAINING_CONFIG.events.find((event)=>event.id==='rail-glint-break').hazardDistance||start>=LOOKOUT_TRAINING_CONFIG.events.find((event)=>event.id==='rail-glint-break').glintBreakEndDistance),'远景LOD不得覆盖反光中断故障段');
 assert.equal(summary.continuousSleepers,0,'不得叠加方盒轨枕层');
 assert(summary.catenaryRepairs>=1,'未重建侵入净空的接触网杆');
@@ -146,7 +166,7 @@ assert.equal(summary.dullRailMaterials,2,'钢轨反光中断段未使用粗糙�
 assert(summary.sourceTrackMeshes>=3,'原线路立体轨道网格未加载');
 assert(summary.reflectiveRailMaterials>=1,'原线路轨头材质未启用金属反光');
 assert(summary.maximumSignalScale<=1.001,'信号机灯位被非真实放大');
-assert(summary.rendererTriangles<1_500_000,'简化走廊渲染三角面过高');
+assert(summary.rendererTriangles<1_550_000,'简化走廊渲染三角面过高');
 // 完整线路远裁剪面会让少量原线路远端对象进入视锥；400次以内仍作为移动端回归上限。
 assert(summary.rendererCalls<400,'完整线路视距下的走廊绘制调用过高');
 assert(summary.sceneNames.filter((name)=>name.startsWith('LOOKOUT_SOURCE_TUNNEL_SEGMENT_')).length===3,'简化300 m原线路隧道段未完整加载');

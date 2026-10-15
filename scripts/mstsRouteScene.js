@@ -729,33 +729,42 @@ export class MstsRouteScene {
     // 这样学生从约400 m外看到的视觉边界，与必须停车的位置一致。
     const gapStart = Math.max(0, Number(railEvent?.hazardDistance || 0));
     const gapEnd = Math.min(maxDistance, Number(railEvent?.glintBreakEndDistance || gapStart + 180));
-    const railBodyMaterial = new THREE.MeshPhysicalMaterial({
-      color: '#46535a',
-      metalness: 0.9,
-      roughness: 0.18,
-      clearcoat: 0.42,
-      clearcoatRoughness: 0.12,
-      fog: false,
-    });
+    // 连续运行线保持 TrackDB 对齐，但轨腰、轨顶尺寸和纹理取自原游戏
+    // A1t100mStrt：轨宽 0.15 m、轨腰高 0.125 m、ACleanTrack2 纹理。
+    const railBodyMaterial = this.getMaterial({
+      name: 'RailSide',
+      texture: 'ACleanTrack2.png',
+      alphaTestMode: 0,
+    }).clone();
+    railBodyMaterial.color.set('#687277');
+    railBodyMaterial.metalness = 0.5;
+    railBodyMaterial.roughness = 0.42;
+    railBodyMaterial.fog = false;
     railBodyMaterial.name = 'LOOKOUT_RAIL_STEEL_BODY';
-    const polishedMaterial = new THREE.MeshPhysicalMaterial({
-      // 使用接近原线路加载阶段的中灰钢色，只由真实光照形成金属高光；
-      // 不使用白色底色或自发光，同时避免远处在深色地形中变成黑线。
-      color: '#8b969a',
-      metalness: 1,
-      roughness: 0.16,
-      clearcoat: 0.55,
-      clearcoatRoughness: 0.2,
-      emissive: '#000000',
-      emissiveIntensity: 0,
-      fog: false,
-    });
+    const polishedMaterial = this.getMaterial({
+      name: 'RailTops',
+      texture: 'ACleanTrack2.png',
+      alphaTestMode: 0,
+    }).clone();
+    // 原轨顶纹理提供细微明暗变化，灰钢色负责压住纹理中的浅色区域，
+    // 保持金属质感而不重新变成白色发光线。
+    polishedMaterial.color.set('#8b969a');
+    polishedMaterial.metalness = 0.9;
+    polishedMaterial.roughness = 0.18;
+    polishedMaterial.clearcoat = 0.72;
+    polishedMaterial.clearcoatRoughness = 0.12;
+    polishedMaterial.emissive.set('#000000');
+    polishedMaterial.emissiveIntensity = 0;
+    polishedMaterial.fog = false;
+    polishedMaterial.polygonOffset = true;
+    polishedMaterial.polygonOffsetFactor = -1;
+    polishedMaterial.polygonOffsetUnits = -3;
     polishedMaterial.name = 'LOOKOUT_POLISHED_RAIL_STEEL';
     // 异常段钢轨实体仍然存在，但轨面不参与环境高光计算，避免主光源把“中断”重新照亮。
     const dullMaterial = new THREE.MeshBasicMaterial({ color: '#07090a', toneMapped: true, fog: false });
     dullMaterial.name = 'LOOKOUT_DULL_RAIL_STEEL';
     const gaugeHalf = 0.7175;
-    // 教学显示用轨头宽度略作视距补偿，仍是完整立体钢轨的顶面而非另加亮线。
+    // 默认尺寸仅作回退；本务线调用使用原模型实测的 0.15 m 轨宽与 0.125 m 轨腰高度。
     const halfWidth = 0.06;
     const baseHeight = 0.18;
     const railHeight = 0.15;
@@ -774,6 +783,7 @@ export class MstsRouteScene {
       const sectionBaseHeight = dimensions.baseHeight ?? baseHeight;
       const sectionHeight = dimensions.railHeight ?? railHeight;
       const positions = [];
+      const uvs = [];
       const indices = [];
       const sampleDistances = [];
       for (let distance = startDistance; distance < endDistance; distance += 4) sampleDistances.push(distance);
@@ -791,6 +801,13 @@ export class MstsRouteScene {
           topLeft.x, topLeft.y, topLeft.z,
           topRight.x, topRight.y, topRight.z,
         );
+        if (dimensions.uvMode === 'rail-side') {
+          const u = distance / 14.5;
+          uvs.push(u, 0.001, u, 0.001, u, 0.07, u, 0.07);
+        } else if (dimensions.uvMode === 'rail-top') {
+          const u = distance / 5;
+          uvs.push(u, 0.133, u, 0.227, u, 0.133, u, 0.227);
+        }
         if (index > 0) {
           const previousBase = (index - 1) * 4;
           const currentBase = index * 4;
@@ -806,6 +823,7 @@ export class MstsRouteScene {
       });
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      if (uvs.length) geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
       geometry.setIndex(indices);
       geometry.computeVertexNormals();
       geometry.computeBoundingSphere();
@@ -815,11 +833,9 @@ export class MstsRouteScene {
       railRoot.add(rail);
     };
 
-    // 真实尺寸的轨头到数百米外后会缩小到不足一个屏幕像素，
-    // 即使几何体仍在，抗锯齿和雾化也会使它看起来“提前断掉”。
-    // 这一远景 LOD 与实体轨头共用同一中心线，只在 150 m 以外渐入，
-    // 渐入完成后不再按距离或雾效淡出。近景仍由完整三维钢轨承担，
-    // 反光中断段不生成 LOD，不遮挡评判线索。
+    // 原尺寸 0.15 m 轨顶在桌面约 95 m、手机约 57 m 后就会小于一个像素。
+    // 远景 LOD 因此按实际视口动态提前接管，并用暗轨腰轮廓加灰钢轨顶的
+    // 双层结构保留原游戏的边缘对比；反光中断段不生成 LOD。
     const buildFarVisibilitySection = (railOffset, startDistance, endDistance, suffix) => {
       if (endDistance - startDistance < 1) return;
       const distances = [];
@@ -827,7 +843,7 @@ export class MstsRouteScene {
       distances.push(endDistance);
       const centers = distances.map((distance) => {
         const { point, right, up } = this.getLookoutPathFrame3D(distance);
-        return point.clone().addScaledVector(right, railOffset).addScaledVector(up, 0.347);
+        return point.clone().addScaledVector(right, railOffset).addScaledVector(up, 0.334);
       });
       const positions = [];
       const previous = [];
@@ -855,18 +871,28 @@ export class MstsRouteScene {
       geometry.setAttribute('side', new THREE.Float32BufferAttribute(sides, 1));
       geometry.setIndex(indices);
       geometry.computeBoundingSphere();
-      const material = new THREE.ShaderMaterial({
-        name: 'LOOKOUT_DISTANT_RAIL_VISIBILITY_MATERIAL',
-        uniforms: {
-          viewportSize: { value: new THREE.Vector2(Math.max(1, this.canvas.clientWidth), Math.max(1, this.canvas.clientHeight)) },
-          halfWidthPixels: { value: 1.12 },
-          // 与近景实体轨头使用同一原线路灰钢色，远端不再变成白线或黑线。
-          railColor: { value: new THREE.Color('#8b969a') },
-          opacity: { value: 1 },
-          nearFadeStart: { value: 150 },
-          nearFadeEnd: { value: 310 },
-        },
-        vertexShader: `
+      const viewportWidth = Math.max(1, this.canvas.clientWidth);
+      const viewportHeight = Math.max(1, this.canvas.clientHeight);
+      const onePixelDistance = 0.15 * viewportHeight
+        / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2));
+      const nearFadeStart = THREE.MathUtils.clamp(onePixelDistance * 0.65, 40, 90);
+      const nearFadeEnd = THREE.MathUtils.clamp(onePixelDistance * 1.55, 110, 180);
+      const layers = [
+        { id: 'SIDE', halfWidthPixels: 1.15, color: '#394246', opacity: 0.98, renderOrder: 5, polygonOffsetUnits: -2 },
+        { id: 'TOP', halfWidthPixels: 0.62, color: '#8b969a', opacity: 1, renderOrder: 6, polygonOffsetUnits: -5 },
+      ];
+      layers.forEach((layer) => {
+        const material = new THREE.ShaderMaterial({
+          name: `LOOKOUT_DISTANT_RAIL_${layer.id}_MATERIAL`,
+          uniforms: {
+            viewportSize: { value: new THREE.Vector2(viewportWidth, viewportHeight) },
+            halfWidthPixels: { value: layer.halfWidthPixels },
+            railColor: { value: new THREE.Color(layer.color) },
+            opacity: { value: layer.opacity },
+            nearFadeStart: { value: nearFadeStart },
+            nearFadeEnd: { value: nearFadeEnd },
+          },
+          vertexShader: `
           uniform vec2 viewportSize;
           uniform float halfWidthPixels;
           attribute vec3 previous;
@@ -890,7 +916,7 @@ export class MstsRouteScene {
             vViewDistance = max(0.0, -viewPosition.z);
           }
         `,
-        fragmentShader: `
+          fragmentShader: `
           uniform vec3 railColor;
           uniform float opacity;
           uniform float nearFadeStart;
@@ -903,19 +929,24 @@ export class MstsRouteScene {
             gl_FragColor = vec4(railColor, alpha);
           }
         `,
-        transparent: true,
-        depthWrite: false,
-        depthTest: true,
-        toneMapped: false,
+          transparent: true,
+          depthWrite: false,
+          depthTest: true,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: layer.polygonOffsetUnits,
+          toneMapped: false,
+        });
+        this.railVisibilityMaterials.push(material);
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = `MAINLINE_RAIL_VISIBILITY_${layer.id}_${railOffset < 0 ? 'LEFT' : 'RIGHT'}_${suffix}`;
+        mesh.frustumCulled = false;
+        mesh.renderOrder = layer.renderOrder;
+        mesh.userData.layer = layer.id.toLowerCase();
+        mesh.userData.startDistance = startDistance;
+        mesh.userData.endDistance = endDistance;
+        farVisibilityRoot.add(mesh);
       });
-      this.railVisibilityMaterials.push(material);
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.name = `MAINLINE_RAIL_VISIBILITY_${railOffset < 0 ? 'LEFT' : 'RIGHT'}_${suffix}`;
-      mesh.frustumCulled = false;
-      mesh.renderOrder = 5;
-      mesh.userData.startDistance = startDistance;
-      mesh.userData.endDistance = endDistance;
-      farVisibilityRoot.add(mesh);
     };
 
     const farVisibilityRoot = new THREE.Group();
@@ -929,24 +960,27 @@ export class MstsRouteScene {
     for (const railOffset of [-gaugeHalf, gaugeHalf]) {
       // 钢轨本体贯通全线，反光异常只改变顶面材质，不制造真实断轨或接缝。
       buildRailSection(railOffset, 0, maxDistance, railBodyMaterial, 'BODY', {
-        halfWidth: 0.058,
-        baseHeight: 0.18,
-        railHeight: 0.13,
+        halfWidth: 0.075,
+        baseHeight: 0.2,
+        railHeight: 0.125,
+        uvMode: 'rail-side',
       });
       buildRailSection(railOffset, 0, gapStart, polishedMaterial, 'POLISHED_BEFORE', {
-        halfWidth: 0.068,
-        baseHeight: 0.31,
-        railHeight: 0.026,
+        halfWidth: 0.075,
+        baseHeight: 0.325,
+        railHeight: 0.008,
+        uvMode: 'rail-top',
       });
       buildRailSection(railOffset, gapStart, gapEnd, dullMaterial, 'GLINT_BREAK', {
-        halfWidth: 0.068,
-        baseHeight: 0.31,
-        railHeight: 0.026,
+        halfWidth: 0.075,
+        baseHeight: 0.325,
+        railHeight: 0.008,
       });
       buildRailSection(railOffset, gapEnd, maxDistance, polishedMaterial, 'POLISHED_AFTER', {
-        halfWidth: 0.068,
-        baseHeight: 0.31,
-        railHeight: 0.026,
+        halfWidth: 0.075,
+        baseHeight: 0.325,
+        railHeight: 0.008,
+        uvMode: 'rail-top',
       });
       buildFarVisibilitySection(railOffset, 0, gapStart, 'BEFORE_GLINT_BREAK');
       buildFarVisibilitySection(railOffset, gapEnd, maxDistance, 'AFTER_GLINT_BREAK');
@@ -960,7 +994,7 @@ export class MstsRouteScene {
   buildSelectedRouteTrack(maxDistance) {
     const count = this.routePoints.findIndex((_, index) => this.routeDistances[index] > maxDistance);
     const pointCount = count === -1 ? this.routePoints.length : Math.max(2, count + 1);
-    const ribbon = (halfWidth, yOffset, material, name, textured = false) => {
+    const ribbon = (halfWidth, yOffset, material, name, textureLayout = null) => {
       const positions = [];
       const normals = [];
       const uvs = [];
@@ -980,9 +1014,9 @@ export class MstsRouteScene {
         const rightEdge = center.clone().addScaledVector(right, halfWidth);
         positions.push(left.x, left.y, left.z, rightEdge.x, rightEdge.y, rightEdge.z);
         normals.push(0, 1, 0, 0, 1, 0);
-        if (textured) {
-          const repeat = this.routeDistances[index] / 6.56;
-          uvs.push(0, repeat, 1, repeat);
+        if (textureLayout) {
+          const repeat = textureLayout.vOrigin - this.routeDistances[index] / textureLayout.repeatLength;
+          uvs.push(textureLayout.uMin, repeat, textureLayout.uMax, repeat);
         }
         if (index < pointCount - 1) {
           const base = index * 2;
@@ -992,7 +1026,7 @@ export class MstsRouteScene {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-      if (textured) geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      if (textureLayout) geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
       geometry.setIndex(indices);
       geometry.computeBoundingSphere();
       const mesh = new THREE.Mesh(geometry, material);
@@ -1003,20 +1037,27 @@ export class MstsRouteScene {
       this.routeRoot.add(mesh);
     };
 
-    ribbon(2.52, -0.045, new THREE.MeshStandardMaterial({
+    ribbon(2.72, -0.045, new THREE.MeshStandardMaterial({
       color: '#625f57', roughness: 1, metalness: 0, side: THREE.DoubleSide,
     }), 'SELECTED_ROUTE_BALLAST_SHOULDER');
     const trackMaterial = this.getMaterial({
-      name: 'MSTS_SELECTED_ROUTE_TRACK',
+      name: 'Trackbed',
       texture: 'ACleanTrack1.png',
       alphaTestMode: 0,
     }).clone();
-    trackMaterial.roughness = 0.72;
-    trackMaterial.metalness = 0.12;
+    trackMaterial.roughness = 0.84;
+    trackMaterial.metalness = 0.08;
+    trackMaterial.name = 'LOOKOUT_SOURCE_TRACKBED_MATERIAL';
     trackMaterial.polygonOffset = true;
-    trackMaterial.polygonOffsetFactor = -2;
-    trackMaterial.polygonOffsetUnits = -2;
-    ribbon(2.24, 0.008, trackMaterial, 'SELECTED_ROUTE_TEXTURED_TRACK', true);
+    // 道床向深度缓冲区后方轻推，避免50 km远裁剪面下把远景轨顶遮掉。
+    trackMaterial.polygonOffsetFactor = 1;
+    trackMaterial.polygonOffsetUnits = 2;
+    ribbon(2.5, 0.2, trackMaterial, 'SELECTED_ROUTE_TEXTURED_TRACK', {
+      uMin: -0.139,
+      uMax: 0.862,
+      vOrigin: 1,
+      repeatLength: 5,
+    });
   }
 
   buildSourceDepartureSignal(data) {
@@ -1785,7 +1826,15 @@ export class MstsRouteScene {
     const width = Math.max(1, Math.round(rect.width));
     const height = Math.max(1, Math.round(rect.height));
     this.renderer.setSize(width, height, false);
-    this.railVisibilityMaterials.forEach((material) => material.uniforms.viewportSize.value.set(width, height));
+    const onePixelRailDistance = 0.15 * height
+      / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2));
+    const railFadeStart = THREE.MathUtils.clamp(onePixelRailDistance * 0.65, 40, 90);
+    const railFadeEnd = THREE.MathUtils.clamp(onePixelRailDistance * 1.55, 110, 180);
+    this.railVisibilityMaterials.forEach((material) => {
+      material.uniforms.viewportSize.value.set(width, height);
+      material.uniforms.nearFadeStart.value = railFadeStart;
+      material.uniforms.nearFadeEnd.value = railFadeEnd;
+    });
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
   }
