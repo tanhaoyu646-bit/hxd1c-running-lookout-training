@@ -739,9 +739,9 @@ export class MstsRouteScene {
     });
     railBodyMaterial.name = 'LOOKOUT_RAIL_STEEL_BODY';
     const polishedMaterial = new THREE.MeshPhysicalMaterial({
-      // 轨头使用中深灰钢材本色，只由真实光照形成金属高光；
-      // 不使用白色底色或自发光，避免远处看起来像钢轨被擦除。
-      color: '#69757a',
+      // 使用接近原线路加载阶段的中灰钢色，只由真实光照形成金属高光；
+      // 不使用白色底色或自发光，同时避免远处在深色地形中变成黑线。
+      color: '#8b969a',
       metalness: 1,
       roughness: 0.16,
       clearcoat: 0.55,
@@ -859,10 +859,10 @@ export class MstsRouteScene {
         name: 'LOOKOUT_DISTANT_RAIL_VISIBILITY_MATERIAL',
         uniforms: {
           viewportSize: { value: new THREE.Vector2(Math.max(1, this.canvas.clientWidth), Math.max(1, this.canvas.clientHeight)) },
-          halfWidthPixels: { value: 0.92 },
-          // 与近景实体轨头使用同一钢色，远端不再变成白色反光线。
-          railColor: { value: new THREE.Color('#69757a') },
-          opacity: { value: 0.96 },
+          halfWidthPixels: { value: 1.12 },
+          // 与近景实体轨头使用同一原线路灰钢色，远端不再变成白线或黑线。
+          railColor: { value: new THREE.Color('#8b969a') },
+          opacity: { value: 1 },
           nearFadeStart: { value: 150 },
           nearFadeEnd: { value: 310 },
         },

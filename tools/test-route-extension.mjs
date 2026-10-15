@@ -43,7 +43,8 @@ assert.match(routeSceneSource, /LOOKOUT_MAINLINE_RAIL_VISIBILITY_LOD/, '缺少�
 assert.match(routeSceneSource, /nearFadeStart:\s*\{\s*value:\s*150\s*\}/, '远景LOD不得替代近景实体钢轨');
 assert.match(routeSceneSource, /this\.camera\.far = Math\.max\(50_000, Math\.ceil\(this\.pathLength \+ 1_000\)\)/, '相机远裁剪面未覆盖完整本务线路');
 assert.doesNotMatch(routeSceneSource, /uniform float fogFar/, '远景钢轨不得再按场景雾距淡出');
-assert.equal((routeSceneSource.match(/new THREE\.Color\('#69757a'\)/g) || []).length, 1, '远景钢轨必须使用与实体轨头一致的中深灰钢色');
+assert.equal((routeSceneSource.match(/new THREE\.Color\('#8b969a'\)/g) || []).length, 1, '远景钢轨必须使用与实体轨头一致的原线路中灰钢色');
+assert.match(routeSceneSource, /halfWidthPixels:\s*\{\s*value:\s*1\.12\s*\}/, '远景钢轨未保持稳定的最小屏幕宽度');
 assert.match(routeSceneSource, /emissive:\s*'#000000'[\s\S]*?emissiveIntensity:\s*0/, '实体轨头不得使用白色或蓝色自发光');
 
 const alignedPoints = buildRailAlignedPath(path.positions, scene.instances, { spacing: 5 });

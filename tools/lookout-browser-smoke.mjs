@@ -123,7 +123,7 @@ assert(summary.railVisibilityLodEnd>=summary.pathLength-1,'主线远景钢轨可
 assert.equal(summary.railVisibilityDistanceLimited,false,'远景钢轨仍存在人为距离限制');
 assert.equal(summary.railVisibilityUsesFog,false,'远景钢轨仍按场景雾距淡出');
 assert.equal(summary.continuousRailFogEnabled,false,'连续实体钢轨仍受场景雾效隐藏');
-assert.equal(summary.polishedRailColor,'69757a','近景轨头未使用中深灰钢材本色');
+assert.equal(summary.polishedRailColor,'8b969a','近景轨头未使用原线路加载画面的中灰钢色');
 assert.equal(summary.distantRailColor,summary.polishedRailColor,'远景轨头颜色与近景钢材不一致');
 assert.equal(summary.polishedRailEmissive,'000000','正常轨头仍带有白色或蓝色自发光');
 assert.equal(summary.polishedRailEmissiveIntensity,0,'正常轨头自发光强度未关闭');
@@ -184,6 +184,7 @@ for (const [label, distance] of (mobile ? [] : [
   ['rail-transition', events['rail-glint-break'].hazardDistance - 220],
   ['rail-break', events['rail-glint-break'].hazardDistance - 60],
   ['intrusion', events['intrusion-crossing'].hazardDistance - 55],
+  ['post-finish', LOOKOUT_TRAINING_CONFIG.finishDistance + 500],
 ])) {
   await evaluate(`(()=>{const state=window.__trainingSim.state;state.distance=${distance};state.speed=60;window.__routeScene.update(state.distance,state.speed,'front',true,1);window.__routeScene.updateLookoutTraining(state.lookout,state.distance);return true;})()`);
   await new Promise((resolve)=>setTimeout(resolve,180));
