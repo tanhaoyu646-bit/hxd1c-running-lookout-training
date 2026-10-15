@@ -69,7 +69,9 @@ const summary = await evaluate(`(()=>{
     terrainResolution:window.__routeScene.routeRoot.getObjectByName('MSTS_SOURCE_TERRAIN')?.userData.sourceResolution||0,
     terrainCorridorLimited:Boolean(window.__routeScene.routeRoot.getObjectByName('MSTS_SOURCE_TERRAIN')?.userData.railwayCorridorLimited),
     selectedTrackBeds:names.filter((name)=>name==='SELECTED_ROUTE_TEXTURED_TRACK').length,
+    selectedTrackEnd:window.__routeScene.routeRoot.getObjectByName('SELECTED_ROUTE_TEXTURED_TRACK')?.userData.endDistance||0,
     continuousRails:names.filter((name)=>name.startsWith('LOOKOUT_RAIL_')).length,
+    continuousRailEnd:window.__routeScene.routeRoot.getObjectByName('LOOKOUT_CONTINUOUS_SOURCE_STYLE_RAILS')?.userData.endDistance||0,
     continuousSleepers:names.filter((name)=>name==='LOOKOUT_CONTINUOUS_SLEEPERS').length,
     catenaryRepairs:window.__routeScene.routeRoot.getObjectByName('LOOKOUT_REALIGNED_CATENARY_MASTS')?.children.length||0,
     throughSignalPresent:Boolean(window.__routeScene.routeRoot.getObjectByName('TEACHING_2328_THROUGH_SIGNAL')),
@@ -95,6 +97,8 @@ assert.equal(summary.routeLive,true);
 assert.equal(summary.trainingScope,'lookout');
 assert.equal(summary.trainingMode,'assessment');
 assert(summary.pathLength>LOOKOUT_TRAINING_CONFIG.finishDistance,'线路长度不足以覆盖结算点');
+assert(summary.selectedTrackEnd>=summary.pathLength-1,'本务线道床未延伸到完整TrackDB路径终点');
+assert(summary.continuousRailEnd>=summary.pathLength-1,'连续实体钢轨未延伸到完整TrackDB路径终点');
 for(const name of ['LOOKOUT_NORMAL_CROSSING','LOOKOUT_TUNNEL','LOOKOUT_TUNNEL_EXIT_BACKLIGHT','LOOKOUT_TUNNEL_EXIT_GLARE','LOOKOUT_TUNNEL_EXIT_COLLAPSE','LOOKOUT_TUNNEL_EXIT_ROCK_1','LOOKOUT_INTRUSION_CROSSING','LOOKOUT_INTRUSION_ACTORS','LOOKOUT_SOURCE_SEDAN','LOOKOUT_CROSSING_APPROACH_ROAD','LOOKOUT_RAIL_LEFT_GLINT_BREAK'])assert(summary.sceneNames.includes(name),`缺少三维对象 ${name}`);
 assert(summary.sceneNames.includes('LOOKOUT_SOURCE_SEDAN'),'侵限道口未使用原游戏轿车模型');
 assert.equal(summary.throughSignalPresent,true,'未生成原游戏通过信号机');

@@ -142,7 +142,11 @@ export class MstsRouteScene {
       this.buildTerrain(terrainData);
       this.buildRoute(sceneData);
       this.buildPassengerConsist(12);
-      const renderedRouteDistance = Math.min(this.pathLength, LOOKOUT_TRAINING_CONFIG.finishDistance + 350);
+      // 瞭望项目的本务主线在加载时一次性生成到 TrackDB 路径终点。
+      // 课程仍在6 km结算，但不再因考核终点人为截断三维钢轨。
+      const renderedRouteDistance = this.isLookout
+        ? this.pathLength
+        : Math.min(this.pathLength, LOOKOUT_TRAINING_CONFIG.finishDistance + 350);
       const railEvent = LOOKOUT_TRAINING_CONFIG.events.find((item) => item.visualKind === 'rail');
       if (this.renderOptions.proceduralTrack) this.buildSelectedRouteTrack(renderedRouteDistance);
       if (this.renderOptions.railHighlights) this.buildRailHighlights(renderedRouteDistance, railEvent);
@@ -746,6 +750,10 @@ export class MstsRouteScene {
     const railHeight = 0.15;
     const railRoot = new THREE.Group();
     railRoot.name = 'LOOKOUT_CONTINUOUS_SOURCE_STYLE_RAILS';
+    railRoot.userData.generatedAtLoad = true;
+    railRoot.userData.source = 'NEIYI TrackDB rail-aligned path';
+    railRoot.userData.startDistance = 0;
+    railRoot.userData.endDistance = maxDistance;
 
     const buildRailSection = (railOffset, startDistance, endDistance, material, suffix, dimensions = {}) => {
       if (endDistance - startDistance < 0.5) return;
@@ -862,6 +870,8 @@ export class MstsRouteScene {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.name = name;
       mesh.frustumCulled = false;
+      mesh.userData.generatedAtLoad = true;
+      mesh.userData.endDistance = maxDistance;
       this.routeRoot.add(mesh);
     };
 

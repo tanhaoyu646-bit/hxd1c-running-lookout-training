@@ -34,6 +34,11 @@ assert.match(routeSceneSource, /MSTS_SOURCE_TERRAIN/);
 assert.match(routeSceneSource, /A1t100mStrtTun\.s/);
 assert.match(routeSceneSource, /limitTerrainAtRailway/);
 assert.match(routeSceneSource, /LOOKOUT_ROUTE_RENDER_OPTIONS/);
+assert.match(
+  routeSceneSource,
+  /renderedRouteDistance = this\.isLookout[\s\S]*?\? this\.pathLength/,
+  '瞭望项目的连续本务主线不得在6 km考核终点附近截断',
+);
 
 const alignedPoints = buildRailAlignedPath(path.positions, scene.instances, { spacing: 5 });
 const alignedDistances = cumulativePathDistances(alignedPoints);
