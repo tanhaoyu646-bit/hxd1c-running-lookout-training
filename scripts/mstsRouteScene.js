@@ -78,6 +78,7 @@ export class MstsRouteScene {
     this.passengerCars = [];
     this.lookoutRoot = null;
     this.lookoutVisuals = {};
+    this.railVisibilityMaterials = [];
     this.intrusionVehicleMotionStart = null;
     this.lookoutCatenaryRepairDistances = [];
     this.signalRaycaster = new THREE.Raycaster();
@@ -802,6 +803,120 @@ export class MstsRouteScene {
       railRoot.add(rail);
     };
 
+    // 真实尺寸的轨头到数百米外后会缩小到不足一个屏幕像素，
+    // 即使几何体仍在，抗锯齿和雾化也会使它看起来“提前断掉”。
+    // 这一远景 LOD 与实体轨头共用同一中心线，只在 150 m 以外渐入；
+    // 近景仍由完整三维钢轨承担，反光中断段不生成 LOD，不遮挡评判线索。
+    const buildFarVisibilitySection = (railOffset, startDistance, endDistance, suffix) => {
+      if (endDistance - startDistance < 1) return;
+      const distances = [];
+      for (let distance = startDistance; distance < endDistance; distance += 8) distances.push(distance);
+      distances.push(endDistance);
+      const centers = distances.map((distance) => {
+        const { point, right, up } = this.getLookoutPathFrame3D(distance);
+        return point.clone().addScaledVector(right, railOffset).addScaledVector(up, 0.347);
+      });
+      const positions = [];
+      const previous = [];
+      const next = [];
+      const sides = [];
+      const indices = [];
+      centers.forEach((center, index) => {
+        const previousCenter = centers[Math.max(0, index - 1)];
+        const nextCenter = centers[Math.min(centers.length - 1, index + 1)];
+        for (const side of [-1, 1]) {
+          positions.push(center.x, center.y, center.z);
+          previous.push(previousCenter.x, previousCenter.y, previousCenter.z);
+          next.push(nextCenter.x, nextCenter.y, nextCenter.z);
+          sides.push(side);
+        }
+        if (index < centers.length - 1) {
+          const base = index * 2;
+          indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+        }
+      });
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('previous', new THREE.Float32BufferAttribute(previous, 3));
+      geometry.setAttribute('next', new THREE.Float32BufferAttribute(next, 3));
+      geometry.setAttribute('side', new THREE.Float32BufferAttribute(sides, 1));
+      geometry.setIndex(indices);
+      geometry.computeBoundingSphere();
+      const material = new THREE.ShaderMaterial({
+        name: 'LOOKOUT_DISTANT_RAIL_VISIBILITY_MATERIAL',
+        uniforms: {
+          viewportSize: { value: new THREE.Vector2(Math.max(1, this.canvas.clientWidth), Math.max(1, this.canvas.clientHeight)) },
+          halfWidthPixels: { value: 0.92 },
+          railColor: { value: new THREE.Color('#e7f5f7') },
+          opacity: { value: 0.88 },
+          nearFadeStart: { value: 150 },
+          nearFadeEnd: { value: 310 },
+          fogColor: { value: this.scene.fog.color.clone() },
+          fogNear: { value: this.scene.fog.near },
+          fogFar: { value: this.scene.fog.far },
+        },
+        vertexShader: `
+          uniform vec2 viewportSize;
+          uniform float halfWidthPixels;
+          attribute vec3 previous;
+          attribute vec3 next;
+          attribute float side;
+          varying float vViewDistance;
+          void main() {
+            vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+            vec4 currentClip = projectionMatrix * viewPosition;
+            vec4 previousClip = projectionMatrix * modelViewMatrix * vec4(previous, 1.0);
+            vec4 nextClip = projectionMatrix * modelViewMatrix * vec4(next, 1.0);
+            vec2 previousNdc = previousClip.xy / max(abs(previousClip.w), 0.0001);
+            vec2 nextNdc = nextClip.xy / max(abs(nextClip.w), 0.0001);
+            vec2 directionPixels = (nextNdc - previousNdc) * viewportSize;
+            vec2 normalPixels = length(directionPixels) > 0.0001
+              ? normalize(vec2(-directionPixels.y, directionPixels.x))
+              : vec2(1.0, 0.0);
+            vec2 offsetNdc = normalPixels * side * halfWidthPixels * 2.0 / viewportSize;
+            currentClip.xy += offsetNdc * currentClip.w;
+            gl_Position = currentClip;
+            vViewDistance = max(0.0, -viewPosition.z);
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 railColor;
+          uniform float opacity;
+          uniform float nearFadeStart;
+          uniform float nearFadeEnd;
+          uniform vec3 fogColor;
+          uniform float fogNear;
+          uniform float fogFar;
+          varying float vViewDistance;
+          void main() {
+            float nearAlpha = smoothstep(nearFadeStart, nearFadeEnd, vViewDistance);
+            float fogFactor = smoothstep(fogNear, fogFar, vViewDistance);
+            float alpha = opacity * nearAlpha * (1.0 - fogFactor);
+            if (alpha < 0.01) discard;
+            gl_FragColor = vec4(mix(railColor, fogColor, fogFactor), alpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        toneMapped: false,
+      });
+      this.railVisibilityMaterials.push(material);
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = `MAINLINE_RAIL_VISIBILITY_${railOffset < 0 ? 'LEFT' : 'RIGHT'}_${suffix}`;
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 5;
+      mesh.userData.startDistance = startDistance;
+      mesh.userData.endDistance = endDistance;
+      farVisibilityRoot.add(mesh);
+    };
+
+    const farVisibilityRoot = new THREE.Group();
+    farVisibilityRoot.name = 'LOOKOUT_MAINLINE_RAIL_VISIBILITY_LOD';
+    farVisibilityRoot.userData.source = 'screen-space LOD over complete 3D rail heads';
+    farVisibilityRoot.userData.startDistance = 0;
+    farVisibilityRoot.userData.endDistance = maxDistance;
+
     for (const railOffset of [-gaugeHalf, gaugeHalf]) {
       // 钢轨本体贯通全线，反光异常只改变顶面材质，不制造真实断轨或接缝。
       buildRailSection(railOffset, 0, maxDistance, railBodyMaterial, 'BODY', {
@@ -824,9 +939,13 @@ export class MstsRouteScene {
         baseHeight: 0.31,
         railHeight: 0.026,
       });
+      buildFarVisibilitySection(railOffset, 0, gapStart, 'BEFORE_GLINT_BREAK');
+      buildFarVisibilitySection(railOffset, gapEnd, maxDistance, 'AFTER_GLINT_BREAK');
     }
     this.routeRoot.add(railRoot);
+    this.routeRoot.add(farVisibilityRoot);
     this.lookoutVisuals.railGlint = railRoot;
+    this.lookoutVisuals.railVisibilityLod = farVisibilityRoot;
   }
 
   buildSelectedRouteTrack(maxDistance) {
@@ -1657,11 +1776,17 @@ export class MstsRouteScene {
     const width = Math.max(1, Math.round(rect.width));
     const height = Math.max(1, Math.round(rect.height));
     this.renderer.setSize(width, height, false);
+    this.railVisibilityMaterials.forEach((material) => material.uniforms.viewportSize.value.set(width, height));
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
   }
 
   render() {
+    this.railVisibilityMaterials.forEach((material) => {
+      material.uniforms.fogColor.value.copy(this.scene.fog.color);
+      material.uniforms.fogNear.value = this.scene.fog.near;
+      material.uniforms.fogFar.value = this.scene.fog.far;
+    });
     this.renderer.render(this.scene, this.camera);
   }
 }
