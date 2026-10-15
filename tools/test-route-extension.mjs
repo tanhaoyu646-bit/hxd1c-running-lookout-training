@@ -41,6 +41,8 @@ assert.match(
 );
 assert.match(routeSceneSource, /LOOKOUT_MAINLINE_RAIL_VISIBILITY_LOD/, '缺少主线远景钢轨可见LOD');
 assert.match(routeSceneSource, /nearFadeStart:\s*\{\s*value:\s*150\s*\}/, '远景LOD不得替代近景实体钢轨');
+assert.match(routeSceneSource, /this\.camera\.far = Math\.max\(50_000, Math\.ceil\(this\.pathLength \+ 1_000\)\)/, '相机远裁剪面未覆盖完整本务线路');
+assert.doesNotMatch(routeSceneSource, /uniform float fogFar/, '远景钢轨不得再按场景雾距淡出');
 
 const alignedPoints = buildRailAlignedPath(path.positions, scene.instances, { spacing: 5 });
 const alignedDistances = cumulativePathDistances(alignedPoints);

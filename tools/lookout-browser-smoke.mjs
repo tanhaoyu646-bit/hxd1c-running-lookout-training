@@ -47,13 +47,14 @@ await send('Page.navigate',{url});
 await evaluate(`new Promise((resolve,reject)=>{const started=Date.now();const timer=setInterval(()=>{if(window.__routeScene?.ready&&document.querySelector('.route-scene.live')&&document.querySelectorAll('#procedure li').length===6){clearInterval(timer);resolve(true);}else if(Date.now()-started>30000){clearInterval(timer);reject(new Error('途中瞭望页面初始化超时'));}},100);})`,true);
 if(mobile){await evaluate(`document.querySelector('#enter-training').click();true`);await new Promise((resolve)=>setTimeout(resolve,240));}
 const summary = await evaluate(`(()=>{
-  const names=[];const materialNames=[];let sourceTrackMeshes=0;let reflectiveRailMaterials=0;let maximumSignalScale=0;
+  const names=[];const materialNames=[];const continuousRailMaterials=new Set();let sourceTrackMeshes=0;let reflectiveRailMaterials=0;let maximumSignalScale=0;
   window.__routeScene.routeRoot.traverse((object)=>{
     if(object.name)names.push(object.name);
     if(object.material?.name)materialNames.push(object.material.name);
     if(/^A\\d+t.*\\.s:/i.test(object.name||''))sourceTrackMeshes+=1;
     if(/rail[_ ]?tops?/i.test(object.material?.name||''))reflectiveRailMaterials+=1;
     if(/SOURCE_.*SIGNAL.*_VISUAL/.test(object.name||''))maximumSignalScale=Math.max(maximumSignalScale,object.scale.x);
+    if(/^LOOKOUT_RAIL_/.test(object.name||'')&&object.material)continuousRailMaterials.add(object.material);
   });
   return {
     title:document.title,
@@ -61,6 +62,8 @@ const summary = await evaluate(`(()=>{
     procedureItems:document.querySelectorAll('#procedure li').length,
     routeLive:document.querySelector('#route-scene').classList.contains('live'),
     pathLength:Math.round(window.__routeScene.pathLength),
+    cameraFar:window.__routeScene.camera.far,
+    fullRouteFarPlane:Boolean(window.__routeScene.camera.userData.fullRouteFarPlane),
     trainingScope:window.__trainingSim.state.trainingScope,
     trainingMode:window.__trainingSim.state.trainingMode,
     controlsText:document.querySelector('#training-controls').innerText,
@@ -75,6 +78,9 @@ const summary = await evaluate(`(()=>{
     railVisibilityLodSegments:names.filter((name)=>name.startsWith('MAINLINE_RAIL_VISIBILITY_')).length,
     railVisibilityLodEnd:window.__routeScene.routeRoot.getObjectByName('LOOKOUT_MAINLINE_RAIL_VISIBILITY_LOD')?.userData.endDistance||0,
     railVisibilityLodRanges:(window.__routeScene.routeRoot.getObjectByName('LOOKOUT_MAINLINE_RAIL_VISIBILITY_LOD')?.children||[]).map((item)=>[item.userData.startDistance,item.userData.endDistance]),
+    railVisibilityDistanceLimited:Boolean(window.__routeScene.routeRoot.getObjectByName('LOOKOUT_MAINLINE_RAIL_VISIBILITY_LOD')?.userData.distanceLimited),
+    railVisibilityUsesFog:window.__routeScene.railVisibilityMaterials.some((material)=>Object.hasOwn(material.uniforms,'fogFar')),
+    continuousRailFogEnabled:[...continuousRailMaterials].some((material)=>material.fog!==false),
     continuousSleepers:names.filter((name)=>name==='LOOKOUT_CONTINUOUS_SLEEPERS').length,
     catenaryRepairs:window.__routeScene.routeRoot.getObjectByName('LOOKOUT_REALIGNED_CATENARY_MASTS')?.children.length||0,
     throughSignalPresent:Boolean(window.__routeScene.routeRoot.getObjectByName('TEACHING_2328_THROUGH_SIGNAL')),
@@ -100,9 +106,14 @@ assert.equal(summary.routeLive,true);
 assert.equal(summary.trainingScope,'lookout');
 assert.equal(summary.trainingMode,'assessment');
 assert(summary.pathLength>LOOKOUT_TRAINING_CONFIG.finishDistance,'线路长度不足以覆盖结算点');
+assert(summary.cameraFar>=summary.pathLength+999,'相机远裁剪面未覆盖完整3D线路');
+assert.equal(summary.fullRouteFarPlane,true,'未启用完整线路相机视距');
 assert(summary.selectedTrackEnd>=summary.pathLength-1,'本务线道床未延伸到完整TrackDB路径终点');
 assert(summary.continuousRailEnd>=summary.pathLength-1,'连续实体钢轨未延伸到完整TrackDB路径终点');
 assert(summary.railVisibilityLodEnd>=summary.pathLength-1,'主线远景钢轨可视LOD未延伸到完整TrackDB路径终点');
+assert.equal(summary.railVisibilityDistanceLimited,false,'远景钢轨仍存在人为距离限制');
+assert.equal(summary.railVisibilityUsesFog,false,'远景钢轨仍按场景雾距淡出');
+assert.equal(summary.continuousRailFogEnabled,false,'连续实体钢轨仍受场景雾效隐藏');
 for(const name of ['LOOKOUT_NORMAL_CROSSING','LOOKOUT_TUNNEL','LOOKOUT_TUNNEL_EXIT_BACKLIGHT','LOOKOUT_TUNNEL_EXIT_GLARE','LOOKOUT_TUNNEL_EXIT_COLLAPSE','LOOKOUT_TUNNEL_EXIT_ROCK_1','LOOKOUT_INTRUSION_CROSSING','LOOKOUT_INTRUSION_ACTORS','LOOKOUT_SOURCE_SEDAN','LOOKOUT_CROSSING_APPROACH_ROAD','LOOKOUT_RAIL_LEFT_GLINT_BREAK'])assert(summary.sceneNames.includes(name),`缺少三维对象 ${name}`);
 assert(summary.sceneNames.includes('LOOKOUT_SOURCE_SEDAN'),'侵限道口未使用原游戏轿车模型');
 assert.equal(summary.throughSignalPresent,true,'未生成原游戏通过信号机');
@@ -123,7 +134,8 @@ assert(summary.sourceTrackMeshes>=3,'原线路立体轨道网格未加载');
 assert(summary.reflectiveRailMaterials>=1,'原线路轨头材质未启用金属反光');
 assert(summary.maximumSignalScale<=1.001,'信号机灯位被非真实放大');
 assert(summary.rendererTriangles<1_500_000,'简化走廊渲染三角面过高');
-assert(summary.rendererCalls<350,'简化走廊绘制调用过高');
+// 完整线路远裁剪面会让少量原线路远端对象进入视锥；400次以内仍作为移动端回归上限。
+assert(summary.rendererCalls<400,'完整线路视距下的走廊绘制调用过高');
 assert(summary.sceneNames.filter((name)=>name.startsWith('LOOKOUT_SOURCE_TUNNEL_SEGMENT_')).length===3,'简化300 m原线路隧道段未完整加载');
 assert.match(summary.controlsText,/平稳发车4分、贯通试验16分、正常道口10分/);
 assert.match(summary.controlsText,/隧道异常20分、钢轨反光中断20分、侵限道口30分/);
@@ -148,6 +160,7 @@ await writeFile(screenshotPath,Buffer.from(shot.data,'base64'));
 const sceneShots = {};
 const events = Object.fromEntries(LOOKOUT_TRAINING_CONFIG.events.map((event) => [event.id, event]));
 for (const [label, distance] of (mobile ? [] : [
+  ['station', 0],
   ['normal-crossing', events['normal-crossing'].hazardDistance - 45],
   ['through-signal', LOOKOUT_TRAINING_CONFIG.throughSignalDistance - 45],
   ['tunnel-entry', events['tunnel-hazard'].tunnelStartDistance - 70],
