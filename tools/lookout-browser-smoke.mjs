@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { LOOKOUT_TRAINING_CONFIG } from '../scripts/lookoutTrainingConfig.js';
+import { ROUTE_CONTEXT } from '../scripts/smoothStartConfig.js';
 
 const port = Number(process.env.CDP_PORT || 9227);
 const url = process.env.TRAINING_URL || 'http://127.0.0.1:4177/lookout-training/?debug=1';
@@ -105,6 +106,15 @@ const summary = await evaluate(`(()=>{
     distantRailFadeEnd:distantRailTopMaterial?.uniforms.nearFadeEnd.value||0,
     continuousSleepers:names.filter((name)=>name==='LOOKOUT_CONTINUOUS_SLEEPERS').length,
     catenaryRepairs:window.__routeScene.routeRoot.getObjectByName('LOOKOUT_REALIGNED_CATENARY_MASTS')?.children.length||0,
+    departureSignalFaceZ:window.__routeScene.departureSignal?.root.getObjectByName('SOURCE_SIGNAL_GREEN')?.position.z||0,
+    departureSignalGlowZ:window.__routeScene.departureSignal?.root.getObjectByName('SOURCE_SIGNAL_GREEN_GLOW')?.position.z||0,
+    departureSignalGreenColor:window.__routeScene.departureSignal?.lamps.green.lensMaterial.color.getHexString()||'',
+    departureSignalGreenGlowOpacity:window.__routeScene.departureSignal?.lamps.green.glowMaterial.opacity||0,
+    departureSignalGlowDepthTest:window.__routeScene.departureSignal?.lamps.green.glowMaterial.depthTest,
+    departureSignalGlowScale:window.__routeScene.departureSignal?.glowSprites[0]?.scale.x||0,
+    neighborSignalRedColor:window.__routeScene.neighborSignal?.lamps.red.lensMaterial.color.getHexString()||'',
+    neighborSignalRedGlowOpacity:window.__routeScene.neighborSignal?.lamps.red.glowMaterial.opacity||0,
+    sourceStationExitLightCount:(window.__routeScene.routeSignalLights||[]).filter((signal)=>signal.instance?.shape==='chuzhan-halfauto-zhuci.s').length+2,
     throughSignalPresent:Boolean(window.__routeScene.routeRoot.getObjectByName('TEACHING_2328_THROUGH_SIGNAL')),
     throughSignalCount:names.filter((name)=>/^TEACHING_.*_THROUGH_SIGNAL$/.test(name)).length,
     polishedRailMaterials:materialNames.filter((name)=>name==='LOOKOUT_POLISHED_RAIL_STEEL').length,
@@ -161,6 +171,15 @@ assert.equal(summary.railVisibilityLodSegments,8,'左右钢轨的远景轨腰和
 assert(summary.railVisibilityLodRanges.every(([start,end])=>end<=LOOKOUT_TRAINING_CONFIG.events.find((event)=>event.id==='rail-glint-break').hazardDistance||start>=LOOKOUT_TRAINING_CONFIG.events.find((event)=>event.id==='rail-glint-break').glintBreakEndDistance),'远景LOD不得覆盖反光中断故障段');
 assert.equal(summary.continuousSleepers,0,'不得叠加方盒轨枕层');
 assert(summary.catenaryRepairs>=1,'未重建侵入净空的接触网杆');
+assert(summary.departureSignalFaceZ<=-.28,'本线出站信号灯仍埋在灯箱内部');
+assert(summary.departureSignalGlowZ<summary.departureSignalFaceZ,'本线出站信号光晕未位于灯面前方');
+assert.equal(summary.departureSignalGreenColor,'28e878','本线出站信号未显示绿灯');
+assert(summary.departureSignalGreenGlowOpacity>=.9,'本线出站信号绿灯光晕未点亮');
+assert.equal(summary.departureSignalGlowDepthTest,false,'出站信号光晕仍会被自身灯箱遮挡');
+assert(summary.departureSignalGlowScale>=5,'出站信号远距离灯光屏幕尺寸过小');
+assert.equal(summary.neighborSignalRedColor,'e54a46','邻线出站信号未显示红灯');
+assert(summary.neighborSignalRedGlowOpacity>=.9,'邻线出站信号红灯光晕未点亮');
+assert(summary.sourceStationExitLightCount>=4,'站内其余可见出站信号机未补齐灯态');
 assert.equal(summary.polishedRailMaterials,4,'正常钢轨顶面金属材质未完整应用');
 assert.equal(summary.dullRailMaterials,2,'钢轨反光中断段未使用粗糙材质');
 assert(summary.sourceTrackMeshes>=3,'原线路立体轨道网格未加载');
@@ -194,6 +213,7 @@ const sceneShots = {};
 const events = Object.fromEntries(LOOKOUT_TRAINING_CONFIG.events.map((event) => [event.id, event]));
 for (const [label, distance] of (mobile ? [] : [
   ['station', 0],
+  ['departure-signal', ROUTE_CONTEXT.departureSignalDistance - 105],
   ['normal-crossing', events['normal-crossing'].hazardDistance - 45],
   ['through-signal', LOOKOUT_TRAINING_CONFIG.throughSignalDistance - 45],
   ['tunnel-entry', events['tunnel-hazard'].tunnelStartDistance - 70],

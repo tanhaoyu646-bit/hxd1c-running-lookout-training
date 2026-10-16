@@ -75,6 +75,7 @@ export class MstsRouteScene {
     this.neighborSignal = null;
     this.throughSignal = null;
     this.throughSignals = [];
+    this.routeSignalLights = [];
     this.passengerCars = [];
     this.lookoutRoot = null;
     this.lookoutVisuals = {};
@@ -1147,11 +1148,15 @@ export class MstsRouteScene {
     visual.add(body);
 
     const lampGeometry = new THREE.SphereGeometry(0.095, 14, 10);
+    // 该矮型出站信号机朝本列车的一面是模型局部 -Z面。
+    // 先前灯球放在 z≈0 的机头内部，被灯箱深度遮挡，所以材质已点亮
+    // 但驾驶室里看不见。灯面稍微突出原模型前表面，不改动信号机尺寸。
+    const signalFaceZ = -0.29;
     const lampDefinitions = {
-      red: [-0.243, 0.49, 0.025],
-      greenLower: [0.01, 0.49, 0.025],
-      yellow: [0.01, 0.698, 0.025],
-      green: [0.01, 0.911, 0.035],
+      red: [-0.243, 0.49, signalFaceZ],
+      greenLower: [0.01, 0.49, signalFaceZ],
+      yellow: [0.01, 0.698, signalFaceZ],
+      green: [0.01, 0.911, signalFaceZ],
     };
     const lamps = {};
     const lampMeshes = [];
@@ -1174,7 +1179,12 @@ export class MstsRouteScene {
       const glow = new THREE.Sprite(glowMaterial);
       glow.name = `${lamp.name}_GLOW`;
       glow.position.copy(lamp.position);
+      glow.position.z -= 0.025;
       glow.userData.basePosition = lamp.position.clone();
+      glow.userData.basePosition.z -= 0.025;
+      // 发光面已锁定在信号机前表面，光晕作为远距离光学效果
+      // 不再受灯箱自身深度抖动影响。
+      glow.material.depthTest = false;
       glow.renderOrder = 8;
       root.add(glow);
       lamps[lampName] = { lensMaterial, glowMaterial };
@@ -1198,6 +1208,9 @@ export class MstsRouteScene {
       'jinzhan-yugao.s': { green: [0, 5.543, 0], yellow: [0, 5.343, 0], radius: 0.14 },
       'jinzhan.s': { green: [0, 5.343, 0.015], red: [0, 4.314, 0], radius: 0.14 },
       'chuzhan-halfauto.s': { green: [0.01, 0.944, 0], red: [0.01, 0.742, 0], radius: 0.09 },
+      // 站内其余可见矮型出站信号机也需有灯态；本务和邻线
+      // 两架由 buildSourceDepartureSignal 单独控制，在下方会自动排除。
+      'chuzhan-halfauto-zhuci.s': { green: [0.01, 0.911, -0.29], red: [-0.243, 0.49, -0.29], radius: 0.095 },
       'jinzhan-fushi.s': { green: [0.01, 0.762, 0], radius: 0.09 },
       'chuzhan-fushi.s': { green: [0.01, 0.762, 0], radius: 0.09 },
     });
@@ -1236,11 +1249,14 @@ export class MstsRouteScene {
         color: colors[aspect],
         transparent: true,
         opacity: 0.9,
+        depthTest: false,
         depthWrite: false,
         toneMapped: false,
       }));
       glow.position.copy(lamp.position);
+      glow.position.z -= 0.025;
       glow.userData.basePosition = lamp.position.clone();
+      glow.userData.basePosition.z -= 0.025;
       glow.scale.setScalar(definition.radius * 4.5);
       glow.renderOrder = 8;
       visual.add(glow);
@@ -1328,14 +1344,16 @@ export class MstsRouteScene {
 
   updateSignalTeachingVisibility() {
     const teachingSignals = this.throughSignals.length ? this.throughSignals : [this.throughSignal];
-    for (const signal of [this.departureSignal, this.neighborSignal, ...teachingSignals]) {
+    for (const signal of [this.departureSignal, this.neighborSignal, ...this.routeSignalLights, ...teachingSignals]) {
       if (!signal) continue;
       const head = signal.root.localToWorld(new THREE.Vector3(0, 0.70, 0));
       const distance = this.camera.position.distanceTo(head);
       // 保留原游戏信号机和灯位的真实比例。远距只轻微增加光晕，
       // 不再放大信号机本体或灯位，避免产生“假信号机”观感。
       signal.visual.scale.setScalar(1);
-      const glowSize = THREE.MathUtils.clamp(distance * 0.0022, 0.14, 0.65);
+      // 按距离线性增加 Sprite 的世界尺寸，换取约 5–7 个屏幕像素的
+      // 稳定灯光；实体灯球和信号机本体仍保持原比例。
+      const glowSize = THREE.MathUtils.clamp(distance * 0.014, 0.34, 7.2);
       signal.glowSprites.forEach((glow) => {
         glow.position.copy(glow.userData.basePosition);
         glow.scale.setScalar(glowSize);
