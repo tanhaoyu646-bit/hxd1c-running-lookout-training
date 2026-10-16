@@ -51,6 +51,11 @@ assert.match(interfaceSource, /command\('side-release-hold',true\)/);
 assert.doesNotMatch(interfaceSource, /makePhysicalButton\('side-release-hold'/);
 assert.match(styles, /\.stage\.rear-lookout-active \.cab-layer\{display:none\}/);
 assert.match(styles, /\.lkj-native-base/);
+assert.match(styles, /\[data-dwarf-lamp="green"\]\.lit/);
+assert.match(styles, /\[data-dwarf-lamp="greenLower"\]\.lit/);
+assert.match(styles, /\[data-dwarf-lamp="yellow"\]\.lit/);
+assert.match(styles, /\[data-dwarf-lamp="red"\]\.lit/);
+assert.match(styles, /\.signal-modal\.weather-unreadable \.dwarf-signal-preview/);
 assert.match(continuityStyles, /\.independent-brake\.side-release-active/);
 assert.match(sceneSource, /longitudinalSlack/);
 assert.match(sceneSource, /buildRailAlignedPath/);
@@ -61,3 +66,4 @@ assert.match(sceneSource, /rearRight: THREE\.MathUtils\.degToRad\(-165\)/);
 assert.doesNotMatch(sceneSource, /Math\.random\(\).*Sway/);
 
 console.log('Interface assets valid: native LKJ states, transparent physical-key hotspots, pure 3D rear views, and deterministic damped start motion.');
+
