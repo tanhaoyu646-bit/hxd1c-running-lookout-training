@@ -66,4 +66,3 @@ assert.match(sceneSource, /rearRight: THREE\.MathUtils\.degToRad\(-165\)/);
 assert.doesNotMatch(sceneSource, /Math\.random\(\).*Sway/);
 
 console.log('Interface assets valid: native LKJ states, transparent physical-key hotspots, pure 3D rear views, and deterministic damped start motion.');
-
